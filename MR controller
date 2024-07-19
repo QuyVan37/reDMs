@@ -1,0 +1,3545 @@
+using System;
+using System.Collections.Generic;
+using System.Data;
+using System.Data.Entity;
+using System.Linq;
+using System.Net;
+using System.Web;
+using System.Web.Mvc;
+using PagedList;
+using System.Net.Mail;
+using System.Threading;
+using System.Threading.Tasks;
+using System.IO;
+using OfficeOpenXml;
+using DMS03.Models;
+using Aspose.Slides;
+using Microsoft.Ajax.Utilities;
+using Newtonsoft.Json;
+using System.ComponentModel;
+using System.Security.Cryptography;
+
+namespace DMS03.Controllers
+{
+    public class MRsController : Controller
+    {
+        private DMSEntities db = new DMSEntities();
+        public SendEmailController sendEmailJob = new SendEmailController();
+        public CommonFunctionController commonFunction = new CommonFunctionController();
+        // Partial View 
+        public ActionResult basicInfor(int? id)
+        {
+            var mR = db.MRs.Find(id);
+            return View(mR);
+        }
+        // GET: MRs
+
+        public ActionResult Index(string Search, int? page, int? statusID, int? MR_ClassifyID, string fromDate, string toDate, string export, string showAll, string waitFor, string msg)
+        {
+            if (Session["Dept"] == null)
+            {
+                Session["URL"] = HttpContext.Request.Url.PathAndQuery;
+                return RedirectToAction("Index", "Login");
+            }
+            if (page == null) page = 1;
+            int pageSize = 50;
+            int pageNumber = (page ?? 1);
+            var allMR = db.MRs.Where(x => x.Active != false).ToList();
+            var role = Session["MR_Role"].ToString();
+            var dept = Session["Dept"].ToString();
+
+
+            List<MR> listMR = new List<MR>();
+            if (dept == "STD")
+            {
+                listMR = allMR.Where(x => x.StatusID == 1 || x.StatusID == 11).ToList();
+            }
+            if (dept == "PAE" && role == "Check")
+            {
+                listMR = allMR.Where(x => x.StatusID == 2).ToList();
+            }
+            if (dept == "PAE" && role == "Approve")
+            {
+                listMR = allMR.Where(x => x.StatusID == 3).ToList();
+            }
+            if (dept == "PLAN" && role == "Check")
+            {
+                listMR = allMR.Where(x => x.StatusID == 4 || x.ReUpdateBudgetCode == true).ToList();
+            }
+            if (dept == "PLAN" && role == "Approve")
+            {
+                listMR = allMR.Where(x => x.StatusID == 5 || x.ReUpdateBudgetCode == true).ToList();
+            }
+            if (dept == "PUR" && role == "Check")
+            {
+                listMR = allMR.ToList();
+            }
+            if (dept == "PUR" && role == "Approve")
+            {
+                listMR = allMR.Where(x => x.StatusID == 7).ToList();
+            }
+
+            if (dept == "CRG")
+            {
+                if (role == "Approve")
+                {
+                    listMR = allMR.Where(x => x.StatusID == 16).ToList();
+                }
+                else
+                {
+                    listMR = allMR.Where(x => x.Belong != null ? x.Belong.Contains("CRG") : x.StatusID == 16).ToList();
+                }
+            }
+
+            if (dept == "PE1")
+            {
+                if (role == "Approve")
+                {
+                    listMR = allMR.Where(x => x.StatusID == 15).ToList();
+                }
+                else
+                {
+                    listMR = allMR.Where(x => x.Belong != null ? x.Belong.Contains("PACKING") : x.StatusID == 15).ToList();
+                }
+            }
+
+            // For searching 
+            if (!String.IsNullOrEmpty(Search) || !String.IsNullOrEmpty(fromDate) || !String.IsNullOrEmpty(toDate) || (MR_ClassifyID > 0 || statusID > 0))
+            {
+                var searchResult = allMR;
+
+                // search Text
+                if (!String.IsNullOrEmpty(Search))
+                {
+
+                    Search = Search.Trim();
+                    searchResult = allMR.Where(x => x.PartNo != null ? x.PartNo.Contains(Search) : x.MRID == 0).ToList();
+                    if (searchResult.Count() == 0)
+                    {
+                        searchResult = allMR.Where(x => x.DieNo != null ? x.DieNo.Contains(Search) : x.MRID == 0).ToList();
+                    }
+                    if (searchResult.Count() == 0)
+                    {
+                        searchResult = allMR.Where(x => x.PartName != null ? x.PartName.Contains(Search) : x.MRID == 0).ToList();
+                    }
+                    if (searchResult.Count() == 0)
+                    {
+                        searchResult = allMR.Where(x => x.SupplierID != null ? x.Supplier.SupplierName.Contains(Search) : x.MRID == 0).ToList();
+                    }
+                    if (searchResult.Count() == 0)
+                    {
+                        searchResult = allMR.Where(x => x.MRNo != null ? x.MRNo.Contains(Search) : x.MRID == 0).ToList();
+                    }
+                    if (searchResult.Count() == 0)
+                    {
+                        searchResult = allMR.Where(x => x.StatusID != null ? x.MRStatusCalogory.StatusType.Contains(Search) : x.MRID == 0).ToList();
+                    }
+                }
+                // Search From
+                if (!String.IsNullOrEmpty(fromDate))
+                {
+                    searchResult = searchResult.Where(x => x.RequestDate >= Convert.ToDateTime(fromDate)).ToList();
+                }
+                // Search To
+                if (!String.IsNullOrEmpty(toDate))
+                {
+                    searchResult = searchResult.Where(x => x.RequestDate <= Convert.ToDateTime(toDate)).ToList();
+                }
+                // Search MR_TypeID
+                if (MR_ClassifyID > 0)
+                {
+                    searchResult = searchResult.Where(x => x.TypeID == MR_ClassifyID).ToList();
+                }
+                if (statusID > 0)
+                {
+                    searchResult = searchResult.Where(x => x.StatusID == statusID).ToList();
+                }
+
+                listMR = searchResult;
+            }
+
+
+            // Show all MRs
+            if (!String.IsNullOrEmpty(showAll))
+            {
+                listMR = allMR;
+            }
+
+            // For sum
+            {
+                if (!String.IsNullOrEmpty(waitFor))
+                {
+                    listMR = allMR.Where(x => x.MRStatusCalogory.StatusType.ToLower().Contains(waitFor.ToLower())).ToList();
+                }
+            }
+
+            var finalMRshow = listMR.Where(x => x.Active != false).OrderByDescending(x => x.RequestDate).ToList();
+            if (export == "Export")
+            {
+                ExportExcelList(finalMRshow);
+            }
+            ViewBag.msg = msg;
+            ViewBag.fromDate = fromDate;
+            ViewBag.toDate = toDate;
+            ViewBag.BudgetCode = db.BudgetCodeMR_PLAN.ToList();
+            ViewBag.StatusID = new SelectList(db.MRStatusCalogories, "StatusID", "StatusType", statusID);
+            ViewBag.MR_ClassifyID = new SelectList(db.MRTypes, "MR_ClassifyID", "Type", MR_ClassifyID);
+            ViewBag.Search = Search;
+            ViewBag.WIssue = db.MRs.Count(x => x.StatusID == 1 && x.Active != false);
+            ViewBag.WPAECheck = db.MRs.Count(x => x.StatusID == 2 && x.Active != false);
+            ViewBag.WPAEApp = db.MRs.Count(x => x.StatusID == 3 && x.Active != false);
+            ViewBag.WPLANCheck = db.MRs.Count(x => (x.StatusID == 4 || x.ReUpdateBudgetCode == true) && x.Active != false);
+            ViewBag.WPLANApp = db.MRs.Count(x => x.StatusID == 5 && x.Active != false);
+            ViewBag.WPURCheck = db.MRs.Count(x => x.StatusID == 6 && x.Active != false);
+            ViewBag.WPURApp = db.MRs.Count(x => x.StatusID == 7 && x.Active != false);
+            ViewBag.Rejected = db.MRs.Count(x => x.StatusID == 11 && x.Active != false);
+            ViewBag.WPEApp = db.MRs.Count(x => x.StatusID == 15 && x.Active != false);
+            ViewBag.WCRGApp = db.MRs.Count(x => x.StatusID == 16 && x.Active != false);
+
+            ViewBag.ReupdateBudget = db.MRs.Count(x => x.ReUpdateBudgetCode == true && x.Active != false);
+            ViewBag.ExchangeRateVNDtoUSD = db.ExchangeRates.ToList().LastOrDefault().RateVNDtoUSD;
+            ViewBag.ExchangeRateJPYtoUSD = db.ExchangeRates.ToList().LastOrDefault().RateJPYtoUSD;
+
+            return View(finalMRshow.ToPagedList(pageNumber, pageSize));
+        }
+
+        /******************************************Finish Issue***************************************************/
+        /*********************************************************************************************************/
+
+        public ActionResult issueMR()
+        {
+            if (Session["Dept"] == null)
+            {
+                Session["URL"] = HttpContext.Request.Url.PathAndQuery;
+                return RedirectToAction("Index", "Login");
+            }
+            if (Session["Dept"].ToString() != "PUR" && Session["Dept"].ToString() != "CRG")
+            {
+                ViewBag.err = "You do not have permistion to request MR!";
+            }
+            ViewBag.SupplierID = new SelectList(db.Suppliers, "SupplierID", "SupplierCode");
+            ViewBag.ProcessCodeID = new SelectList(db.ProcessCodeCalogories, "ProcessCodeID", "Type");
+            return View();
+        }
+
+        [HttpPost]
+        [ValidateAntiForgeryToken]
+        public ActionResult issueMR(MR mR, string actionBtn, string returnResultIssueByList, string upload, HttpPostedFileBase file, HttpPostedFileBase purAttach)
+        {
+            if (Session["Name"] == null)
+            {
+                return RedirectToAction("login", "Login");
+            }
+            if (Session["Dept"].ToString() != "PUR" && Session["Dept"].ToString() != "CRG" && Session["Role"].ToString() != "Admin")
+            {
+                ViewBag.err = "You do not have permistion to request MR!";
+                goto returnView_For_ReInput;
+            }
+            if (mR.PartNo != null)
+            {
+                mR.PartNo = mR.PartNo.ToUpper().Trim();
+                if(mR.PartNo.Length != 12)
+                {
+                    ViewBag.err = "PART NO only 12 leter";
+                    goto returnView_For_ReInput;
+                }
+            }
+
+            if (upload != null && file != null)
+            {
+                IssueMRByExcelAllType(mR.Belong, file);
+            }
+            if (actionBtn == "Request MR")
+            {
+                if (mR.TypeID == 1) // X1-New Die
+                {
+                    if (ModelState.IsValid)
+                    {
+                        if (mR.ModelName == null || mR.PartNo == null || mR.PartName == null || mR.DrawHis == null || mR.Clasification == null
+                            || mR.ECNNo == null || mR.EstimateCost == null || mR.Unit == null || mR.SupplierID == null || mR.OrderTo == null
+                            || mR.ProcessCodeID == null || mR.CavQty == null || mR.MCSize == null || mR.Reason == null
+                            || mR.PDD == null)
+                        {
+                            ViewBag.err = "Please input enough information before issuing!";
+                            goto returnView_For_ReInput;
+                        }
+
+                        var DieNo = mR.PartNo.ToUpper().Trim() + "-" + mR.Clasification + "-001";
+
+                        if (mR.Belong == "PACKING") goto next1;
+                        // Voi khuon Packing ko can check DieExist
+                        //Check exist DieNo or not? true => return; false => continuse
+                        var checkDieExist = db.Die1.Where(x => x.DieNo == DieNo && x.Active != false && x.isOfficial == true).Count();
+                        if (checkDieExist > 0)
+                        {
+                            ViewBag.err = "This Part No already exist, Please Check it again";
+                            goto returnView_For_ReInput;
+                        }
+
+                    next1:
+
+                        //Kiem tra model ton tai chua => new chua thi tao new ModelName
+                        {
+                            string[] findModelName = commonFunction.CreateModelName(mR.ModelName);
+                            mR.ModelID = Convert.ToInt32(findModelName[0]);
+                            mR.ModelName = findModelName[1];
+                            mR.Phase = findModelName[2];
+                        }
+
+                        if (commonFunction.checkMrExistOrNot(mR.PartNo, mR.Clasification, mR.DrawHis, mR.TypeID, 0))
+                        {
+                            ViewBag.err = "This MR already Issue, Please Check it again";
+                            goto returnView_For_ReInput;
+                        }
+                        // Kiểm tra số kí tự của ECN No = 13 kí tự và His = 3 kí tự
+                        if (mR.ECNNo.Length != 13 || mR.DrawHis.Length != 3)
+                        {
+                            ViewBag.err = "Not Correct Numbers of Character ECN No or Draw His";
+                            goto returnView_For_ReInput;
+                        }
+                        // Kiểm tra DieMakerCode OK ko?
+                        var checkDieMakerCode = db.Suppliers.Where(x => x.SupplierCode == mR.OrderTo).FirstOrDefault();
+                        if (checkDieMakerCode == null)
+                        {
+                            ViewBag.err = "Die Maker Code ko chính xác, gồm 4 kí tự. VD: TABT, 5400";
+                            goto returnView_For_ReInput;
+                        }
+                        mR.OrderTo = mR.OrderTo.Trim().ToUpper();
+                        mR.StatusID = 1; // 1: Wait Issue 
+
+                        mR.DieNo = DieNo;
+                        mR.RequestDate = DateTime.Now;
+                        mR.RequestBy = Session["Name"].ToString();
+                        mR.RequestUserMail = Session["Mail"].ToString();
+                        mR.SupplierName = db.Suppliers.Find(mR.SupplierID).SupplierName;
+                        // Kiểm tra Unit to exchange tiền tệ
+                        if (mR.Unit == "USD")
+                        {
+                            mR.ExchangeRate = null;
+                            mR.EstimateCostExchangeUSD = mR.EstimateCost;
+                        }
+                        else
+                        {
+                            if (mR.Unit == "VND")
+                            {
+                                mR.ExchangeRate = db.ExchangeRates.ToList().LastOrDefault().RateVNDtoUSD;
+                                mR.EstimateCostExchangeUSD = System.Math.Round(Convert.ToDouble(mR.EstimateCost / mR.ExchangeRate), 2);
+                            }
+                            else
+                            if (mR.Unit == "JPY")
+                            {
+                                mR.ExchangeRate = db.ExchangeRates.ToList().LastOrDefault().RateJPYtoUSD;
+                                mR.EstimateCostExchangeUSD = System.Math.Round(Convert.ToDouble(mR.EstimateCost / mR.ExchangeRate), 2);
+                            }
+                        }
+                        goto next_stept_after_verify_OK;
+
+                    }
+
+                }
+
+                if (mR.TypeID == 2) // X1-Additinal Die
+                {
+                    if (ModelState.IsValid)
+                    {
+                        if (mR.ModelName == null || mR.PartNo == null || mR.PartName == null || mR.DrawHis == null || mR.Clasification == null
+                             || mR.ECNNo == null || mR.EstimateCost == null || mR.SupplierID == null || mR.OrderTo == null
+                             || mR.ProcessCodeID == null || mR.CavQty == null || mR.MCSize == null || mR.Reason == null
+                             || mR.PDD == null)
+                        {
+                            ViewBag.err = "Please input enough information before issuing!";
+                            goto returnView_For_ReInput;
+                        }
+                        var DieNo = mR.PartNo.Trim().ToUpper() + "-" + mR.Clasification.ToUpper().Trim() + "-001";
+                        var part = db.CommonDie1.Where(x => x.PartNo == mR.PartNo).FirstOrDefault();
+                        if (mR.Belong == "PACKING") goto next2;
+                        // KO Cần check part / Die exist nếu là khuôn Packing (Vì ko có dữ liệu khuôn)
+                        if (part == null)
+                        {
+                            ViewBag.err = "Ko thể issue MR additional Die cho 1 part chưa tồn tại!";
+                            goto returnView_For_ReInput;
+                        }
+
+                        //Check die No exist or not?
+                        var checkDieExist = db.Die1.Where(x => x.DieNo == DieNo && x.Active != false && x.isOfficial == true).Count();
+                        if (checkDieExist > 0)
+                        {
+                            ViewBag.err = "Please Check Clasification " + mR.Clasification + ". It's not correct. This Die already exist";
+                            goto returnView_For_ReInput;
+                        }
+
+                    next2:
+                        // Check this MR đã được Issue Hay chưa => true => ko cho issue nữa
+                        if (commonFunction.checkMrExistOrNot(mR.PartNo, mR.Clasification, mR.DrawHis, mR.TypeID, 0))
+                        {
+                            ViewBag.err = "This MR was Issued, please check again";
+                            goto returnView_For_ReInput;
+                        }
+                        // Kiểm tra số kí tự của ECN No = 13 kí tự và His = 3 kí tự
+                        if (mR.ECNNo.Length != 13 || mR.DrawHis.Length != 3)
+                        {
+                            ViewBag.err = "Not Correct Numbers of Character ECN No or Draw His";
+                            goto returnView_For_ReInput;
+                        }
+                        // Kiểm tra DieMakerCode OK ko?
+                        var checkDieMakerCode = db.Suppliers.Where(x => x.SupplierCode == mR.OrderTo).FirstOrDefault();
+                        if (checkDieMakerCode == null)
+                        {
+                            ViewBag.err = "Die Maker Code ko chính xác, gồm 4 kí tự. VD: TABT, 5400";
+                            goto returnView_For_ReInput;
+                        }
+                        mR.OrderTo = mR.OrderTo.Trim().ToUpper();
+                        try
+                        {
+                            mR.ModelID = part.Die1.ModelID;
+                            mR.Phase = part.Die1.ModelList.Phase;
+                            mR.DieNo = DieNo;
+                        }
+                        catch
+                        {
+                            // all Null
+                        }
+                        mR.StatusID = 1; // 1: W-Issue
+                        mR.RequestDate = DateTime.Now;
+                        mR.RequestBy = Session["Name"].ToString();
+                        mR.RequestUserMail = Session["Mail"].ToString();
+                        mR.SupplierName = db.Suppliers.Find(mR.SupplierID).SupplierName;
+
+                        // Kiểm tra Unit to exchange tiền tệ
+                        if (mR.Unit == "USD")
+                        {
+                            mR.ExchangeRate = null;
+                            mR.EstimateCostExchangeUSD = mR.EstimateCost;
+                        }
+                        else
+                        {
+                            if (mR.Unit == "VND")
+                            {
+                                mR.ExchangeRate = db.ExchangeRates.ToList().LastOrDefault().RateVNDtoUSD;
+                                mR.EstimateCostExchangeUSD = System.Math.Round(Convert.ToDouble(mR.EstimateCost / mR.ExchangeRate), 2);
+                            }
+                            else
+                            if (mR.Unit == "JPY")
+                            {
+                                mR.ExchangeRate = db.ExchangeRates.ToList().LastOrDefault().RateJPYtoUSD;
+                                mR.EstimateCostExchangeUSD = System.Math.Round(Convert.ToDouble(mR.EstimateCost / mR.ExchangeRate), 2);
+                            }
+                        }
+                        goto next_stept_after_verify_OK;
+
+                    }
+                }
+
+
+                if (mR.TypeID == 3) // X4-Renewal Die
+                {
+
+                    if (ModelState.IsValid)
+                    {
+                        if (mR.RenewForDie == null || mR.PartNo == null || mR.PartName == null || mR.DrawHis == null
+                            || mR.ECNNo == null || mR.EstimateCost == null || mR.SupplierID == null || mR.OrderTo == null
+                            || mR.CavQty == null || mR.MCSize == null || mR.Reason == null || mR.Clasification == null
+                            || mR.PDD == null)
+                        {
+                            ViewBag.err = "Please input enough information before issuing!";
+                            goto returnView_For_ReInput;
+                        }
+                        var DieNo = mR.PartNo.Trim().ToUpper() + "-" + mR.Clasification.Trim().ToUpper() + "-001";
+                        var part = db.CommonDie1.Where(x => x.PartNo == mR.PartNo).FirstOrDefault();
+
+                        if (mR.Belong == "PACKING") goto next3;
+                        // Khuôn packing ko cần check part / Die tồn tại vì ko có dữ liệu parking
+
+                        if (part == null)
+                        {
+                            ViewBag.err = "Part No ko tồn tại";
+                            goto returnView_For_ReInput;
+                        }
+
+                        //Check die exist or not?
+                        var checkDieExist = db.Die1.Where(x => x.DieNo == DieNo && x.Active != false && x.isOfficial == true).Count();
+                        if (checkDieExist > 0)
+                        {
+                            ViewBag.err = "Please Check Clasification " + mR.Clasification + ". It's not correct. This Die already exist";
+                            goto returnView_For_ReInput;
+                        }
+
+                    next3:
+                        // Check this MR đã được Issue Hay chưa => true => ko cho issue nữa
+                        if (commonFunction.checkMrExistOrNot(mR.PartNo, mR.Clasification, mR.DrawHis, mR.TypeID, 0))
+                        {
+                            ViewBag.err = "This MR was Issued, please check again";
+                            goto returnView_For_ReInput;
+                        }
+
+                        // Kiểm tra số kí tự của ECN No = 13 kí tự và His = 3 kí tự
+                        if (mR.ECNNo.Length != 13 || mR.DrawHis.Length != 3)
+                        {
+                            ViewBag.err = "Not Correct Numbers of Character ECN No or Draw His";
+                            goto returnView_For_ReInput;
+                        }
+                        // Kiểm tra DieMakerCode OK ko?
+                        var checkDieMakerCode = db.Suppliers.Where(x => x.SupplierCode == mR.OrderTo).FirstOrDefault();
+                        if (checkDieMakerCode == null)
+                        {
+                            ViewBag.err = "Die Maker Code ko chính xác, gồm 4 kí tự. VD: TABT, 5400";
+                            goto returnView_For_ReInput;
+                        }
+                        mR.OrderTo = mR.OrderTo.Trim().ToUpper();
+                        // Kiểm tra Unit to exchange tiền tệ
+                        if (mR.Unit == "USD")
+                        {
+                            mR.ExchangeRate = null;
+                            mR.EstimateCostExchangeUSD = mR.EstimateCost;
+                        }
+                        else
+                        {
+                            if (mR.Unit == "VND")
+                            {
+                                mR.ExchangeRate = db.ExchangeRates.ToList().LastOrDefault().RateVNDtoUSD;
+                                mR.EstimateCostExchangeUSD = System.Math.Round(Convert.ToDouble(mR.EstimateCost / mR.ExchangeRate), 2);
+                            }
+                            else
+                            if (mR.Unit == "JPY")
+                            {
+                                mR.ExchangeRate = db.ExchangeRates.ToList().LastOrDefault().RateJPYtoUSD;
+                                mR.EstimateCostExchangeUSD = System.Math.Round(Convert.ToDouble(mR.EstimateCost / mR.ExchangeRate), 2);
+                            }
+                        }
+                        try
+                        {
+                            mR.ModelID = part.Die1.ModelID;
+                            mR.Phase = part.Die1.ModelList.Phase;
+                            mR.DieNo = DieNo;
+                        }
+                        catch
+                        {
+                            mR.ModelID = null;
+                        }
+
+                        mR.StatusID = 1; // 1: W-Issue
+                        mR.TypeID = 3;   // 2: X4-Renwal
+                        mR.RequestDate = DateTime.Now;
+                        mR.RequestBy = Session["Name"].ToString();
+                        mR.RequestUserMail = Session["Mail"].ToString();
+                        mR.SupplierName = db.Suppliers.Find(mR.SupplierID).SupplierName;
+
+
+                        goto next_stept_after_verify_OK;
+                    }
+
+                }
+
+                if (mR.TypeID == 4) // X5-ECN
+                {
+                    if (ModelState.IsValid)
+                    {
+                        if (mR.DieNo == null || mR.PartNo == null || mR.PartName == null || mR.DrawHis == null
+                            || mR.ECNNo == null || mR.EstimateCost == null || mR.SupplierID == null || mR.OrderTo == null
+                            || mR.CavQty == null || mR.Reason == null || mR.Clasification == null
+                            || mR.PDD == null)
+                        {
+                            ViewBag.err = "Please input enough information before issuing!";
+                            goto returnView_For_ReInput;
+                        }
+                        var part = db.CommonDie1.Where(x => x.PartNo == mR.PartNo).FirstOrDefault();
+
+                        if (mR.Belong == "PACKING") goto next4;
+                        // Khuôn packing ko cần check part / Die tồn tại vì ko có dữ liệu parking
+                        if (part == null)
+                        {
+                            ViewBag.err = "Part No is not correct! Please check again.";
+                            goto returnView_For_ReInput;
+                        }
+                        //Check die exist or not?
+                        var checkDieExist = db.Die1.Where(x => x.DieNo == mR.DieNo && x.Active != false && x.isOfficial == true).Count();
+                        if (checkDieExist == 0)
+                        {
+                            ViewBag.err = "DieNo not exist or PO(X1,X4) not finish yet, Please check it again";
+                            goto returnView_For_ReInput;
+                        }
+
+                    next4:
+
+                        // Check this MR đã được Issue Hay chưa => true => ko cho issue nữa
+                        if (commonFunction.checkMrExistOrNot(mR.PartNo, mR.Clasification, mR.DrawHis, mR.TypeID, 0))
+                        {
+                            ViewBag.err = "This MR was Issued, please check again";
+                            goto returnView_For_ReInput;
+                        }
+
+                        // Kiểm tra số kí tự của ECN No = 13 kí tự và His = 3 kí tự
+                        if (mR.ECNNo.Length != 13 || mR.DrawHis.Length != 3)
+                        {
+                            ViewBag.err = "Not Correct Numbers of Character ECN No or Draw His";
+                            goto returnView_For_ReInput;
+                        }
+                        // Kiểm tra DieMakerCode OK ko?
+                        var checkDieMakerCode = db.Suppliers.Where(x => x.SupplierCode == mR.OrderTo).FirstOrDefault();
+                        if (checkDieMakerCode == null)
+                        {
+                            ViewBag.err = "Die Maker Code ko chính xác, gồm 4 kí tự. VD: TABT, 5400";
+                            goto returnView_For_ReInput;
+                        }
+                        try
+                        {
+                            mR.ModelID = part.Die1.ModelID;
+                            mR.MCSize = part.Die1.MCsize;
+                            mR.Phase = part.Die1.ModelList.Phase;
+                        }
+                        catch
+                        {
+                            //all null
+                        }
+
+                        mR.OrderTo = mR.OrderTo.Trim().ToUpper();
+                        mR.StatusID = 1; // 1: W-Issue
+                        mR.RequestDate = DateTime.Now;
+                        mR.RequestBy = Session["Name"].ToString();
+                        mR.RequestUserMail = Session["Mail"].ToString();
+                        mR.SupplierName = db.Suppliers.Find(mR.SupplierID).SupplierName;
+
+
+
+                        // Kiểm tra Unit to exchange tiền tệ
+                        if (mR.Unit == "USD")
+                        {
+                            mR.ExchangeRate = null;
+                            mR.EstimateCostExchangeUSD = mR.EstimateCost;
+                        }
+                        else
+                        {
+                            if (mR.Unit == "VND")
+                            {
+                                mR.ExchangeRate = db.ExchangeRates.ToList().LastOrDefault().RateVNDtoUSD;
+                                mR.EstimateCostExchangeUSD = System.Math.Round(Convert.ToDouble(mR.EstimateCost / mR.ExchangeRate), 2);
+                            }
+                            else
+                            if (mR.Unit == "JPY")
+                            {
+                                mR.ExchangeRate = db.ExchangeRates.ToList().LastOrDefault().RateJPYtoUSD;
+                                mR.EstimateCostExchangeUSD = System.Math.Round(Convert.ToDouble(mR.EstimateCost / mR.ExchangeRate), 2);
+                            }
+                        }
+                        goto next_stept_after_verify_OK;
+                    }
+
+                }
+
+                if (mR.TypeID == 5) // X6-Modify
+                {
+                    if (ModelState.IsValid)
+                    {
+                        if (mR.DieNo == null || mR.PartNo == null || mR.PartName == null || mR.DrawHis == null
+                            || mR.ECNNo == null || mR.EstimateCost == null || mR.SupplierID == null || mR.OrderTo == null
+                            || mR.CavQty == null || mR.Reason == null || mR.Clasification == null
+                            || mR.PDD == null)
+                        {
+                            ViewBag.err = "Please input enough information before issuing!";
+                            goto returnView_For_ReInput;
+                        }
+                        var part = db.CommonDie1.Where(x => x.PartNo == mR.PartNo).FirstOrDefault();
+
+                        if (mR.Belong == "PACKING") goto next4;
+                        // Khuôn packing ko cần check part / Die tồn tại vì ko có dữ liệu parking
+                        if (part == null)
+                        {
+                            ViewBag.err = "Part No is not correct! Please check again.";
+                            goto returnView_For_ReInput;
+                        }
+                        //Check die exist or not?
+                        var checkDieExist = db.Die1.Where(x => x.DieNo == mR.DieNo && x.Active != false && x.isOfficial == true).Count();
+                        if (checkDieExist == 0)
+                        {
+                            ViewBag.err = "DieNo not exist or PO(X1,X4) not finish yet, Please check it again";
+                            goto returnView_For_ReInput;
+                        }
+
+                    next4:
+                        //Check this MR đã được Issue Hay chưa => true => ko cho issue nữa
+                        if (commonFunction.checkMrExistOrNot(mR.PartNo, mR.Clasification, mR.DrawHis, mR.TypeID, 0))
+                        {
+                            ViewBag.err = "This MR was Issued, please check again";
+                            goto returnView_For_ReInput;
+                        }
+
+                        // Kiểm tra số kí tự của ECN No = 13 kí tự và His = 3 kí tự
+                        if (mR.ECNNo.Length != 13 || mR.DrawHis.Length != 3)
+                        {
+                            ViewBag.err = "Not Correct Numbers of Character ECN No or Draw His";
+                            goto returnView_For_ReInput;
+                        }
+                        // Kiểm tra DieMakerCode OK ko?
+                        var checkDieMakerCode = db.Suppliers.Where(x => x.SupplierCode == mR.OrderTo).FirstOrDefault();
+                        if (checkDieMakerCode == null)
+                        {
+                            ViewBag.err = "Die Maker Code ko chính xác, gồm 4 kí tự. VD: TABT, 5400";
+                            goto returnView_For_ReInput;
+                        }
+                        try
+                        {
+                            mR.MCSize = part.Die1.MCsize;
+                            mR.Phase = part.Die1.ModelList.Phase;
+                            mR.ProcessCodeID = part.Die1.ProcessCodeID;
+                            mR.ModelID = part.Die1.ModelID;
+                        }
+                        catch
+                        {
+                            // all Null
+                        }
+                        mR.OrderTo = mR.OrderTo.Trim().ToUpper();
+                        mR.StatusID = 1; // 1: W-Issue
+                        mR.SupplierName = db.Suppliers.Find(mR.SupplierID).SupplierName;
+                        mR.RequestDate = DateTime.Now;
+                        mR.RequestBy = Session["Name"].ToString();
+                        mR.RequestUserMail = Session["Mail"].ToString();
+
+                        // Kiểm tra Unit to exchange tiền tệ
+                        var resultExchange = commonFunction.exchangeToUSD(mR.EstimateCost, mR.Unit);
+                        mR.ExchangeRate = resultExchange.rate;
+                        mR.EstimateCostExchangeUSD = resultExchange.price;
+                        //if (mR.Unit == "USD")
+                        //{
+                        //    mR.ExchangeRate = null;
+                        //    mR.EstimateCostExchangeUSD = mR.EstimateCost;
+                        //}
+                        //else
+                        //{
+                        //    if (mR.Unit == "VND")
+                        //    {
+                        //        mR.ExchangeRate = db.ExchangeRates.ToList().LastOrDefault().RateVNDtoUSD;
+                        //        mR.EstimateCostExchangeUSD = System.Math.Round(Convert.ToDouble(mR.EstimateCost / mR.ExchangeRate), 2);
+                        //    }
+                        //    else
+                        //    if (mR.Unit == "JPY")
+                        //    {
+                        //        mR.ExchangeRate = db.ExchangeRates.ToList().LastOrDefault().RateJPYtoUSD;
+                        //        mR.EstimateCostExchangeUSD = System.Math.Round(Convert.ToDouble(mR.EstimateCost / mR.ExchangeRate), 2);
+                        //    }
+                        //}
+                        goto next_stept_after_verify_OK;
+                    }
+                }
+                if (mR.TypeID == 6) // X7-Repair
+                {
+                    if (ModelState.IsValid)
+                    {
+                        if (mR.DieNo == null || mR.PartNo == null || mR.PartName == null || mR.DrawHis == null
+                            || mR.ECNNo == null || mR.EstimateCost == null || mR.SupplierID == null || mR.OrderTo == null
+                            || mR.CavQty == null || mR.Reason == null || mR.Clasification == null
+                            || mR.PDD == null)
+                        {
+                            ViewBag.err = "Please input enough information before issuing!";
+                            goto returnView_For_ReInput;
+                        }
+                        mR.TypeID = 6; // 6: X7-Repair  
+                        //Check part exist or not?
+                        var part = db.CommonDie1.Where(x => x.PartNo == mR.PartNo).FirstOrDefault();
+
+                        if (mR.Belong == "PACKING") goto next5;
+                        // Khuôn packing ko cần check part / Die tồn tại vì ko có dữ liệu parking
+                        if (part == null)
+                        {
+                            ViewBag.err = "Part No is not correct! Please check again.";
+                            goto returnView_For_ReInput;
+                        }
+                        //Check die exist or not?
+                        var checkDieExist = db.Die1.Where(x => x.DieNo == mR.DieNo && x.Active != false && x.isOfficial == true).Count();
+                        if (checkDieExist == 0)
+                        {
+                            ViewBag.err = "DieNo not exist or PO(X1,X4) not finish yet, Please check it again";
+                            goto returnView_For_ReInput;
+                        }
+
+                    next5:
+                        // Check this MR đã được Issue Hay chưa => true => ko cho issue nữa
+                        if (commonFunction.checkMrExistOrNot(mR.PartNo, mR.Clasification, mR.DrawHis, mR.TypeID, 0))
+                        {
+                            ViewBag.err = "This MR was Issued, please check again";
+                            goto returnView_For_ReInput;
+                        }
+
+                        // Kiểm tra số kí tự của ECN No = 13 kí tự và His = 3 kí tự
+                        if (mR.ECNNo.Length != 13 || mR.DrawHis.Length != 3)
+                        {
+                            ViewBag.err = "Not Correct Numbers of Character ECN No or Draw His";
+                            goto returnView_For_ReInput;
+                        }
+                        // Kiểm tra DieMakerCode OK ko?
+                        var checkDieMakerCode = db.Suppliers.Where(x => x.SupplierCode == mR.OrderTo).FirstOrDefault();
+                        if (checkDieMakerCode == null)
+                        {
+                            ViewBag.err = "Die Maker Code ko chính xác, gồm 4 kí tự. VD: TABT, 5400";
+                            goto returnView_For_ReInput;
+                        }
+                        try
+                        {
+                            mR.MCSize = part.Die1.MCsize;
+                            mR.Phase = part.Die1.ModelList.Phase;
+                            mR.ProcessCodeID = part.Die1.ProcessCodeID;
+                            mR.ModelID = part.Die1.ModelID;
+                        }
+                        catch
+                        {
+                            //all null
+                        }
+                        mR.OrderTo = mR.OrderTo.Trim().ToUpper();
+                        mR.StatusID = 1; // 1: W- Issue
+                        mR.SupplierName = db.Suppliers.Find(mR.SupplierID).SupplierName;
+                        mR.RequestDate = DateTime.Now;
+                        mR.RequestBy = Session["Name"].ToString();
+                        mR.RequestUserMail = Session["Mail"].ToString();
+
+                        // Kiểm tra Unit to exchange tiền tệ
+                        if (mR.Unit == "USD")
+                        {
+                            mR.ExchangeRate = null;
+                            mR.EstimateCostExchangeUSD = mR.EstimateCost;
+                        }
+                        else
+                        {
+                            if (mR.Unit == "VND")
+                            {
+                                mR.ExchangeRate = db.ExchangeRates.ToList().LastOrDefault().RateVNDtoUSD;
+                                mR.EstimateCostExchangeUSD = System.Math.Round(Convert.ToDouble(mR.EstimateCost / mR.ExchangeRate), 2);
+                            }
+                            else
+                            if (mR.Unit == "JPY")
+                            {
+                                mR.ExchangeRate = db.ExchangeRates.ToList().LastOrDefault().RateJPYtoUSD;
+                                mR.EstimateCostExchangeUSD = System.Math.Round(Convert.ToDouble(mR.EstimateCost / mR.ExchangeRate), 2);
+                            }
+                        }
+                        goto next_stept_after_verify_OK;
+                    }
+                }
+
+                if (mR.TypeID == 7) // Others
+                {
+                    if (ModelState.IsValid)
+                    {
+                        if (mR.ModelName == null || mR.PartNo == null || mR.PartName == null || mR.DrawHis == null
+                            || mR.ECNNo == null || mR.EstimateCost == null || mR.SupplierID == null || mR.OrderTo == null
+                            || mR.ProcessCodeID == null || mR.CavQty == null || mR.Reason == null
+                            || mR.PDD == null || mR.Clasification == null)
+                        {
+                            ViewBag.err = "Please input enough information before issuing!";
+                            goto returnView_For_ReInput;
+                        }
+                        var DieNo = mR.Clasification.Substring(1, 1) == "2" || mR.Clasification.Substring(1, 1) == "3" || mR.Clasification.Substring(1, 1) == "8" ? mR.PartNo.ToUpper().Trim() + "-" + mR.Clasification + "-001" : mR.DieNo;
+
+                        if (mR.Belong == "PACKING") goto next6;
+                        //Check exist DieNo or not? true => return; false => continuse
+                        var checkDieExist = db.Die1.Where(x => x.DieNo == DieNo && x.Active != false && x.isOfficial == true).Count();
+                        if (checkDieExist > 0)
+                        {
+                            ViewBag.err = "DieNo not exist or PO(X1,X4) not finish yet, Please check it again";
+                            goto returnView_For_ReInput;
+                        }
+
+                    next6:
+                        //Kiem tra model ton tai chua => new chua thi tao new ModelName
+                        {
+                            string[] findModel = commonFunction.CreateModelName(mR.ModelName);
+                            mR.ModelID = Convert.ToInt32(findModel[0]);
+                            mR.ModelName = findModel[1];
+                            mR.Phase = findModel[2];
+                        }
+
+
+                        if (commonFunction.checkMrExistOrNot(mR.PartNo, mR.Clasification, mR.DrawHis, mR.TypeID, 0))
+                        {
+                            ViewBag.err = "This MR already Issue, Please Check it again";
+                            goto returnView_For_ReInput;
+                        }
+                        // Kiểm tra số kí tự của ECN No = 13 kí tự và His = 3 kí tự
+                        if (mR.ECNNo.Length != 13 || mR.DrawHis.Length != 3)
+                        {
+                            ViewBag.err = "Not Correct Numbers of Character ECN No or Draw His";
+                            goto returnView_For_ReInput;
+                        }
+                        // Kiểm tra DieMakerCode OK ko?
+                        var checkDieMakerCode = db.Suppliers.Where(x => x.SupplierCode == mR.OrderTo).FirstOrDefault();
+                        if (checkDieMakerCode == null)
+                        {
+                            ViewBag.err = "Die Maker Code ko chính xác, gồm 4 kí tự. VD: TABT, 5400";
+                            goto returnView_For_ReInput;
+                        }
+                        mR.OrderTo = mR.OrderTo.Trim().ToUpper();
+
+                        mR.DieNo = DieNo;
+                        mR.RequestDate = DateTime.Now;
+                        mR.RequestBy = Session["Name"].ToString();
+                        mR.RequestUserMail = Session["Mail"].ToString();
+                        mR.SupplierName = db.Suppliers.Find(mR.SupplierID).SupplierName;
+
+                        // Kiểm tra Unit to exchange tiền tệ
+                        if (mR.Unit == "USD")
+                        {
+                            mR.ExchangeRate = null;
+                            mR.EstimateCostExchangeUSD = mR.EstimateCost;
+                        }
+                        else
+                        {
+                            if (mR.Unit == "VND")
+                            {
+                                mR.ExchangeRate = db.ExchangeRates.ToList().LastOrDefault().RateVNDtoUSD;
+                                mR.EstimateCostExchangeUSD = System.Math.Round(Convert.ToDouble(mR.EstimateCost / mR.ExchangeRate), 2);
+                            }
+                            else
+                            if (mR.Unit == "JPY")
+                            {
+                                mR.ExchangeRate = db.ExchangeRates.ToList().LastOrDefault().RateJPYtoUSD;
+                                mR.EstimateCostExchangeUSD = System.Math.Round(Convert.ToDouble(mR.EstimateCost / mR.ExchangeRate), 2);
+                            }
+                        }
+                        goto next_stept_after_verify_OK;
+                    }
+                }
+                else
+                {
+                    // Co loi phai return ve view (ko duoc bo doan code else nay sau khi check 7 type ID
+                    goto returnView_For_ReInput;
+                }
+
+
+            next_stept_after_verify_OK:
+                // Kiem tra model ID
+                // Neu Model ID = null. => truong hop Parking die => Tim lai modelName
+                if (!String.IsNullOrEmpty(mR.Note))
+                {
+                    mR.Note = DateTime.Now.ToString("yyyy/MM/dd ") + Session["Name"].ToString() + " :" + mR.Note;
+                }
+                if (mR.ModelID == null)
+                {
+                    string[] FindModelName = commonFunction.CreateModelName(mR.ModelName);
+                    mR.ModelID = Convert.ToInt32(FindModelName[0]);
+                    mR.ModelName = FindModelName[1];
+                    mR.Phase = FindModelName[2]; ;
+                }
+                if (purAttach != null)
+                {
+                    string fileName = purAttach.FileName;
+                    fileName = "PURAttach_" + DateTime.Now.ToString("yyyy-MM-dd HHmmss") + fileName;
+                    purAttach.SaveAs(Server.MapPath("~/File/MR/" + fileName));
+
+                    mR.PURAttach = fileName;
+                }
+                if (mR.Belong == "CRG")
+                {
+                    if (mR.GLAccount == null || mR.AssetNumber == null || mR.Location == null || mR.DE_Die == null)
+                    {
+                        ViewBag.err = "Please input G/L Account || Asset Nummber || Location || DE_Die";
+                        goto returnView_For_ReInput;
+                    }
+                    mR.StatusID = 16; // 1: W-CRG-App
+                    // Tính tổng số MR hiên tại + 1:  mục đích để tạo số MR theo thứ tự
+                    var totalMRinThisYear = db.MRs.Where(x => x.MRNo != null && x.RequestDate.Value.Year == DateTime.Now.Year).Count() + 1;
+                    mR.MRNo = "MR" + DateTime.Now.ToString("yyMMdd") + "-" + totalMRinThisYear + "-00";
+                    mR.IssueBy = Session["Name"].ToString();
+                    mR.IssueDate = DateTime.Now;
+                    mR.RequestBy = Session["Name"].ToString();
+                    mR.RequestDate = DateTime.Now;
+                    mR.Active = true;
+
+                }
+                else // Auto fill in Acc Information.
+                {
+                    var modelColorOrMono = db.ModelLists.Find(mR.ModelID).ModelType;
+                    var supplierCode = db.Suppliers.Find(mR.SupplierID).SupplierCode;
+                    var first2LeterPartNo = mR.PartNo.Remove(2, mR.PartNo.Length - 2);
+                    string[] accInfor = commonFunction.AutoAccFill(mR.TypeID.Value, modelColorOrMono, supplierCode, mR.EstimateCost.Value, mR.Unit, first2LeterPartNo);
+                    mR.GLAccount = accInfor[0];
+                    mR.Location = accInfor[1];
+                    mR.AssetNumber = accInfor[2];
+                    if (mR.Belong == "LBP")
+                    {
+                        mR.StatusID = 2; // 2: W-PAE-Check;
+                    }
+                    else
+                    {
+                        mR.StatusID = 15; // 2: W-PE-App;
+                    }
+                }
+
+                mR.NoOfDieComponent = 1;
+                try
+                {
+                    // Xu li reason cho truong hop X7 repair và X6 modify và OH va ECN
+                    if (mR.TypeID == 6 || mR.TypeID == 5 || mR.TypeID == 7 || mR.TypeID == 4 && mR.Belong != "PACKING")
+                    {
+                        try
+                        {
+                            string[] arrReasonList = mR.Reason.Split(',');
+                            var reason = "";
+                            var troubleID = "";
+
+                           
+
+
+                            foreach (var item in arrReasonList)
+                            {
+                                if (item.Contains("DFM"))
+                                {
+                                    mR.DFMID = db.DSUMs.Where(x => x.DSUMNo == item).FirstOrDefault()?.DFMID;
+                                    reason = "Follow DSUM " + item + ",";
+                                    break;
+                                }
+
+                                var itemCut = item.Remove(item.Length - 3, 3);
+                                if (!String.IsNullOrWhiteSpace(itemCut))
+                                {
+                                    var trbl = db.Troubles.Where(x => x.TroubleNo.Contains(itemCut) && x.Active != false).FirstOrDefault();
+                                    reason = trbl.TroubleName + "," + reason;
+                                    troubleID = trbl.TroubleID + "," + troubleID;
+
+                                }
+
+                            }
+                            mR.Reason = reason.Remove(reason.Length - 1);
+                            mR.TroubleID = troubleID !="" ? troubleID.Remove(troubleID.Length - 1) : null;
+
+                            if (String.IsNullOrWhiteSpace(mR.TroubleID) && mR.DFMID == null)
+                            {
+                                ViewBag.err = "You must input TPI No for case X5 || X6 || X7";
+                                goto returnView_For_ReInput;
+                            }
+                        }
+                        catch
+                        {
+                            ViewBag.err = "You must input TPI No for case X5 || X6 || X7";
+                            goto returnView_For_ReInput;
+                        }
+                    }
+                    // Xử lí Só MR
+                    // Tính tổng số MR hiên tại + 1:  mục đích để tạo số MR theo thứ tự
+                    if (mR.MRNo == null)
+                    {
+                        var totalMRinThisYear = db.MRs.Where(x => x.MRNo != null && x.RequestDate.Value.Year == DateTime.Now.Year).Count() + 1;
+                        mR.MRNo = "MR" + DateTime.Now.ToString("yyMMdd") + "-" + totalMRinThisYear + "-00";
+                    }
+                    else
+                    {
+                        var mainMRNO = mR.MRNo.Remove(mR.MRNo.Length - 2, 2);
+                        var getVerMR = mR.MRNo.Substring(mR.MRNo.Length - 2, 2);
+                        int verNumConvert = Convert.ToInt16(getVerMR);
+                        int newVerMR = verNumConvert + 1;
+                        var newVerMRString = Convert.ToString(newVerMR);
+                        if (newVerMRString.Length == 1)
+                        {
+                            newVerMRString = "0" + newVerMRString;
+                        }
+                        mR.MRNo = mainMRNO + newVerMRString;
+                    }
+                    mR.Active = true;
+                    db.MRs.Add(mR);
+                    db.SaveChanges();
+                    commonFunction.genarateNewDie("", "", "", "", "", "", "", "", "", mR, null);
+                    commonFunction.UpdateTPIStatus(mR, "MRIssue");
+                    // commonFunction.updateDieLaunchingControl(mR, Session["Name"].ToString());
+
+                    if (!String.IsNullOrWhiteSpace(returnResultIssueByList))
+                    {
+
+
+                        return Content("Success");
+                    }
+                    return RedirectToAction("Index");
+                }
+                catch
+                {
+                    //
+                }
+            }
+
+            if (actionBtn == "Edit")
+            {
+
+
+                //Check MR này đã được Issue Chưa? => true => ko cho issue nữa?
+                if (commonFunction.checkMrExistOrNot(mR.PartNo, mR.Clasification, mR.DrawHis, mR.TypeID, mR.MRID))
+                {
+                    ViewBag.err = "This MR already Issue. Please Check it again";
+                    goto returnView_For_ReInput;
+                }
+
+                // Kiểm tra số kí tự của ECN No = 13 kí tự và His = 3 kí tự
+                if (mR.ECNNo.Length != 13 || mR.DrawHis.Length != 3 || mR.Clasification == null)
+                {
+                    ViewBag.err = "Not Correct Numbers of Character ECN No or Draw His || or Not input classification";
+                    goto returnView_For_ReInput;
+                }
+
+
+
+                if (mR.Belong == "PACKING") goto next7;
+                if (mR.TypeID == 1 || mR.TypeID == 2 || mR.TypeID == 3) //Hình thành 1 die iD mới
+                {
+                    var DieNo = mR.PartNo.ToUpper().Trim() + "-" + mR.Clasification + "-001";
+                    //Check exist DieNo or not? true => return; false => continuse
+                    var checkDieExist = db.CommonDie1.Where(x => x.DieNo == DieNo).Count();
+                    if (checkDieExist > 0)
+                    {
+                        ViewBag.err = "You can not issue MR for making New Die (X1,X4) with classification" + mR.Clasification + " .Becasue this die already exist!";
+                        goto returnView_For_ReInput;
+                    }
+                    mR.DieNo = DieNo;
+                }
+                if (mR.TypeID == 4 || mR.TypeID == 5 || mR.TypeID == 6) //Modify Die
+                {
+                    if (mR.DieNo == null)
+                    {
+                        ViewBag.err = "Please input Die ID that you want to Modify/Repair";
+                        goto returnView_For_ReInput;
+                    }
+                    //Check exist DieNo or not? true => return; false => continuse
+                    var checkDieExist = db.CommonDie1.Where(x => x.DieNo == mR.DieNo).Count();
+                    if (checkDieExist == 0)
+                    {
+                        ViewBag.err = "Die ID not correct!";
+                        goto returnView_For_ReInput;
+                    }
+
+                }
+                if (mR.TypeID == 2) // Addtional
+                {
+                    var classification = mR.Clasification;
+                    if (classification.Substring(1, 2) != "1A" || classification.Substring(0, 1) == "1")
+                    {
+                        ViewBag.err = "Clasificaltion " + mR.Clasification + " not for additional Die [X1A]";
+                        goto returnView_For_ReInput;
+                    }
+                }
+                if (mR.TypeID == 3) // Renewal
+                {
+                    var classification = mR.Clasification;
+                    if (classification.Substring(1, 1) != "4")
+                    {
+                        ViewBag.err = "Clasificaltion " + mR.Clasification + " not for renewal [X4Y]";
+                        goto returnView_For_ReInput;
+                    }
+                    if (mR.RenewForDie == null)
+                    {
+                        ViewBag.err = "Please input renewal For Die ID?";
+                        goto returnView_For_ReInput;
+                    }
+                    var checkDieExist = db.CommonDie1.Where(x => x.DieNo == mR.RenewForDie).Count();
+                    if (checkDieExist > 0)
+                    {
+                        ViewBag.err = "You can not issue MR renewal X4 for not exist die";
+                        goto returnView_For_ReInput;
+                    }
+                }
+                else
+                {
+                    mR.RenewForDie = null;
+                }
+
+            next7:
+                if (commonFunction.EditMrAll(mR, Session["Role"].ToString(), Session["Name"].ToString(), purAttach))
+                {
+                    ViewBag.success = "Edit success!";
+                    return RedirectToAction("Index");
+                }
+            }
+
+        returnView_For_ReInput:
+            mR.StatusID = null;
+            ViewBag.SupplierID = new SelectList(db.Suppliers, "SupplierID", "SupplierCode", mR.SupplierID);
+            ViewBag.ProcessCodeID = new SelectList(db.ProcessCodeCalogories, "ProcessCodeID", "Type", mR.ProcessCodeID);
+            ViewBag.purAtt = purAttach;
+            ViewBag.Remark = mR.Note;
+            if (!String.IsNullOrWhiteSpace(returnResultIssueByList))
+            {
+                return Content(ViewBag.err);
+            }
+            return View(mR);
+        }
+
+        public ActionResult EditMR(int id)
+        {
+            if (Session["Dept"] == null)
+            {
+                Session["URL"] = HttpContext.Request.Url.PathAndQuery;
+                return RedirectToAction("Index", "Login");
+            }
+            if (Session["Dept"].ToString() != "PUR" && Session["Dept"].ToString() != "CRG" && Session["Dept"].ToString() != "STD" && Session["Role"].ToString() != "Admin")
+            {
+                ViewBag.err = "You do not have permistion!";
+
+            }
+            var mR = db.MRs.Find(id);
+            if (mR.StatusID != 1 && mR.StatusID != 2 && mR.StatusID != 11)
+            {
+                ViewBag.err = "Can not Edit this MR with status " + mR.MRStatusCalogory.StatusType;
+            }
+            ViewBag.SupplierID = new SelectList(db.Suppliers, "SupplierID", "SupplierCode", mR.SupplierID);
+            ViewBag.ProcessCodeID = new SelectList(db.ProcessCodeCalogories, "ProcessCodeID", "Type", mR.ProcessCodeID);
+            return View(mR);
+        }
+
+
+        //public JsonResult IssueMRByExcel(string belong, HttpPostedFileBase file)
+        //{
+        //    // Apply for all type
+        //    if (Session["Dept"].ToString() != "PUR" && Session["Dept"].ToString() != "CRG")
+        //    {
+        //        return Json(null, JsonRequestBehavior.AllowGet);
+        //    }
+        //    var today = DateTime.Now;
+        //    List<string> listSec = new List<string>();
+        //    List<string> listErr = new List<string>();
+        //    string fileName = "ListNewDieX1IssueMR-" + today.ToString("yyyy-MM-dd-hhss");
+        //    string fileExt = Path.GetExtension(file.FileName);
+        //    if (fileExt == ".xls" || fileExt == ".xlsx")
+        //    {
+        //        string path = Server.MapPath("~/File/MR/");
+        //        fileName += fileExt;
+        //        //file.SaveAs(path + Path.GetFileName(fileName));
+        //        using (ExcelPackage package = new ExcelPackage(file.InputStream))
+        //        {
+        //            ExcelWorksheet worksheet = package.Workbook.Worksheets.First();
+
+
+        //            var start = worksheet.Dimension.Start;
+        //            var end = worksheet.Dimension.End;
+
+        //            for (int row = start.Row + 2; row <= end.Row; row++)
+        //            { // Row by row...
+        //              //Hãy kiểm tra điều kiện đã có dữ liệu nhập vào excel file
+        //                var PartNo = worksheet.Cells[row, 3].Text.Trim().ToUpper();
+        //                if (String.IsNullOrEmpty(PartNo)) break;
+        //                if (PartNo.Length != 12)
+        //                {
+        //                    listErr.Add(PartNo + "-- Lỗi PartNo: Part No gồm 12 kí tự ");
+        //                    goto exitLoop;
+        //                }
+
+        //                var modelName = worksheet.Cells[row, 2].Text.Trim().ToUpper();
+        //                if (modelName.Length == 0)
+        //                {
+        //                    listErr.Add(PartNo + "-- Lỗi Model: Ko có dữ liệu ");
+        //                    goto exitLoop;
+        //                }
+
+        //                var PartName = worksheet.Cells[row, 4].Text.Trim();
+        //                if (PartName.Length == 0)
+        //                {
+        //                    listErr.Add(PartNo + "-- Lỗi Part Name: Ko có dữ liệu ");
+        //                    goto exitLoop;
+        //                }
+
+        //                var Clasification = worksheet.Cells[row, 5].Text.Trim().ToUpper();
+        //                if (Clasification.Length != 3)
+        //                {
+        //                    listErr.Add(PartNo + "-- Lỗi Clasification:  3 kí tự VD:'11A' ");
+        //                    goto exitLoop;
+        //                }
+
+        //                var DrawHis = worksheet.Cells[row, 6].Text.Trim().ToUpper();
+        //                if (DrawHis.Length != 3)
+        //                {
+        //                    listErr.Add(PartNo + "-- Lỗi Draw His, cần 3 kí tự ");
+        //                    goto exitLoop;
+        //                }
+
+        //                var ECNNo = worksheet.Cells[row, 7].Text.Trim().ToUpper();
+        //                if (ECNNo.Length != 13)
+        //                {
+        //                    listErr.Add(PartNo + "-- Lỗi ECN No:  cần 13 kí tự ");
+        //                    goto exitLoop;
+        //                }
+
+        //                var SupplierCode = worksheet.Cells[row, 8].Text.Trim().ToUpper();
+        //                var FindSupplier = db.Suppliers.Where(x => x.SupplierCode == SupplierCode).FirstOrDefault();
+        //                if (FindSupplier == null)
+        //                {
+        //                    listErr.Add(PartNo + "-- Lỗi ở dữ liệu Supplier nếu ko có supplier để select trong form thì inform to PAE Quý ");
+        //                    goto exitLoop;
+        //                }
+
+        //                var DieMakerCodeCode = worksheet.Cells[row, 9].Text.Trim();
+        //                var FindDieMakerCodeCode = db.Suppliers.Where(x => x.SupplierCode == DieMakerCodeCode).FirstOrDefault();
+        //                if (DieMakerCodeCode.Length != 4)
+        //                {
+        //                    listErr.Add(PartNo + "-- Lỗi Die Maker Code: Die Maker Code có 4 kí tự");
+        //                    goto exitLoop;
+        //                }
+
+        //                var CavQty = int.Parse(worksheet.Cells[row, 10].Text);
+        //                if (CavQty == 0)
+        //                {
+        //                    listErr.Add(PartNo + "-- Lỗi ở dữ liệu Cav qty");
+        //                    goto exitLoop;
+        //                }
+
+        //                var MCSize = int.Parse(worksheet.Cells[row, 11].Text);
+        //                if (MCSize < 30)
+        //                {
+        //                    listErr.Add(PartNo + "-- Lỗi ở dữ liệu MC size");
+        //                    goto exitLoop;
+        //                }
+
+        //                var ProcessCode = worksheet.Cells[row, 12].Text.ToUpper();
+        //                var findProcessCode = db.ProcessCodeCalogories.Where(x => x.Type == ProcessCode).FirstOrDefault();
+        //                if (findProcessCode == null)
+        //                {
+        //                    listErr.Add(PartNo + "-- Lỗi Process Code: Ko tồn tại Process code " + ProcessCode);
+        //                    goto exitLoop;
+        //                }
+
+        //                var CommonPart = worksheet.Cells[row, 13].Text.Trim().ToUpper();
+        //                if (CommonPart.Length != 0 && CommonPart.Length != 12 && CommonPart.Length != 25 && CommonPart.Length != 38)
+        //                {
+        //                    listErr.Add(PartNo + "-- Lỗi ở dữ liệu CommonPart - input đủ 12 kí tự cho 1 part RC5-1234-000 và nếu nhiều hơn 2 part thì các nhau bởi dấu phẩy','");
+        //                    goto exitLoop;
+        //                }
+
+        //                DateTime PDD;
+        //                if (!DateTime.TryParse(worksheet.Cells[row, 14].Text, out PDD))
+        //                {
+        //                    listErr.Add(PartNo + "-- Lỗi ở dữ liệu Part Due Date - kiểm tra đúng type date chưa ");
+        //                    goto exitLoop;
+        //                }
+
+
+        //                var Reason = worksheet.Cells[row, 15].Text.Trim();
+        //                if (Reason.Length == 0)
+        //                {
+        //                    listErr.Add(PartNo + "-- Lỗi ở dữ liệu Reason");
+        //                    goto exitLoop;
+        //                }
+
+        //                var EstimateCost = double.Parse(worksheet.Cells[row, 16].Text);
+        //                if (EstimateCost == 0)
+        //                {
+        //                    listErr.Add(PartNo + "-- Lỗi ở dữ liệu EstimateCost");
+        //                    goto exitLoop;
+        //                }
+        //                var unit = worksheet.Cells[row, 17].Text.Trim();
+        //                if (String.IsNullOrEmpty(unit))
+        //                {
+        //                    listErr.Add(PartNo + "-- Lỗi ở dữ liệu Unit");
+        //                    goto exitLoop;
+        //                }
+        //                var dieNo = PartNo + "-11A-001";
+        //                if (commonFunction.checkMrExistOrNot(PartNo, Clasification, DrawHis, 1, 0))
+        //                {
+        //                    listErr.Add(PartNo + "-- Part này đã được Issue");
+        //                    goto exitLoop;
+        //                }
+        //                //*****************************************************************
+
+        //                MR newMR = new MR();
+        //                newMR.PartNo = PartNo;
+        //                newMR.PartName = PartName;
+        //                newMR.Clasification = Clasification;
+        //                newMR.DrawHis = DrawHis;
+        //                newMR.ECNNo = ECNNo;
+        //                newMR.SupplierID = FindSupplier.SupplierID;
+        //                newMR.OrderTo = DieMakerCodeCode;
+        //                newMR.SupplierName = db.Suppliers.Find(newMR.SupplierID).SupplierName;
+        //                newMR.CavQty = CavQty;
+        //                newMR.MCSize = MCSize;
+        //                newMR.RequestDate = DateTime.Now;
+        //                newMR.RequestBy = Session["Name"].ToString();
+        //                newMR.RequestUserMail = Session["Mail"].ToString();
+        //                newMR.ProcessCodeID = findProcessCode.ProcessCodeID;
+        //                newMR.CommonPart = CommonPart;
+        //                newMR.PDD = PDD;
+        //                newMR.Reason = Reason;
+        //                newMR.EstimateCost = EstimateCost;
+
+
+        //                // Kiểm tra Unit and exchange tiền tệ
+        //                if (unit == "USD")
+        //                {
+        //                    newMR.Unit = unit;
+        //                    newMR.ExchangeRate = null;
+        //                    newMR.EstimateCostExchangeUSD = EstimateCost;
+        //                }
+        //                else
+        //                {
+        //                    if (unit == "VND")
+        //                    {
+        //                        newMR.Unit = unit;
+        //                        newMR.ExchangeRate = db.ExchangeRates.ToList().LastOrDefault().RateVNDtoUSD;
+        //                        newMR.EstimateCostExchangeUSD = System.Math.Round(EstimateCost / Convert.ToDouble(newMR.ExchangeRate), 2);
+        //                    }
+        //                    else
+        //                    if (unit == "JPY")
+        //                    {
+        //                        newMR.Unit = unit;
+        //                        newMR.ExchangeRate = db.ExchangeRates.ToList().LastOrDefault().RateJPYtoUSD;
+        //                        newMR.EstimateCostExchangeUSD = System.Math.Round(EstimateCost / Convert.ToDouble(newMR.ExchangeRate), 2);
+        //                    }
+        //                }
+
+
+        //                //*************************************************************
+        //                //0. Xử lí Type & Belong
+
+
+        //                if (newMR.Clasification == "11A")
+        //                {
+        //                    newMR.TypeID = 1; // NewDie
+        //                }
+        //                else
+        //                {
+        //                    if (newMR.Clasification.Substring(0, 1) != "1" && newMR.Clasification.Substring(1, 2) == "1A") //21A,31A,41A
+        //                    {
+        //                        newMR.TypeID = 2; // Addtional
+        //                    }
+        //                    else
+        //                    {
+        //                        listErr.Add(PartNo + "-- Classification Ko phải là X1A New/Additnal");
+        //                        goto exitLoop;
+        //                    }
+        //                }
+
+
+        //                newMR.Belong = belong;
+
+        //                //1.Check Die đã tồn tại chưa
+        //                var DieNo = PartNo + "-" + Clasification + "-001";
+        //                //Check exist DieNo or not? true => return; false => continuse
+        //                var checkDieExist = db.Die1.Where(x => x.DieNo == DieNo).Count();
+        //                if (checkDieExist > 0)
+        //                {
+        //                    listErr.Add(PartNo + "-- Die" + DieNo + " Đã tồn tại => Clasification NG");
+        //                    goto exitLoop;
+        //                }
+        //                newMR.DieNo = DieNo;
+        //                //2.Check modelName & Phase MR
+        //                //Kiem tra model ton tai chua => new chua thi tao new ModelName
+        //                {
+        //                    string[] findModelName = commonFunction.CreateModelName(modelName);
+        //                    newMR.ModelID = Convert.ToInt32(findModelName[0]);
+        //                    newMR.ModelName = findModelName[1];
+        //                    newMR.Phase = findModelName[2]; ;
+        //                }
+
+        //                //3.Check MR đã tồn tại chưa
+        //                // Check this MR đã được Issue Hay chưa => true => ko cho issue nữa
+        //                bool result = commonFunction.checkMrExistOrNot(newMR.PartNo, newMR.Clasification, newMR.DrawHis, newMR.TypeID, 0);
+        //                if (result)
+        //                {
+        //                    listErr.Add(newMR.PartNo + ": MR này đã được Issue");
+        //                    goto exitLoop;
+        //                }
+        //                if (belong == "CRG")
+        //                {
+        //                    var GL = worksheet.Cells[row, 18].Text.Trim();
+        //                    var AssetNumber = worksheet.Cells[row, 19].Text.Trim();
+        //                    var Location = worksheet.Cells[row, 20].Text.Trim();
+
+        //                    if (String.IsNullOrEmpty(GL) || String.IsNullOrEmpty(AssetNumber) || String.IsNullOrEmpty(Location))
+        //                    {
+        //                        listErr.Add(PartNo + "-- Chưa Input G/L Action || Asset Number || Loaction");
+        //                        goto exitLoop;
+        //                    }
+        //                    newMR.GLAccount = GL;
+        //                    newMR.AssetNumber = AssetNumber;
+        //                    newMR.Location = Location;
+        //                    newMR.StatusID = 16; // 1: W-CRG-App
+        //                    // Tính tổng số MR hiên tại + 1:  mục đích để tạo số MR theo thứ tự
+        //                    var totalMRinThisYear = db.MRs.Where(x => x.MRNo != null && x.RequestDate.Value.Year == DateTime.Now.Year).Count() + 1;
+        //                    newMR.MRNo = "MR" + DateTime.Now.ToString("yyMMdd") + "-" + totalMRinThisYear;
+        //                    newMR.IssueBy = Session["Name"].ToString();
+        //                    newMR.IssueDate = DateTime.Now;
+        //                    newMR.RequestBy = Session["Name"].ToString();
+        //                    newMR.RequestDate = DateTime.Now;
+        //                    newMR.Active = true;
+        //                }
+        //                else // Auto fill in Acc Information.
+        //                {
+        //                    var modelColorOrMono = db.ModelLists.Find(newMR.ModelID).ModelType;
+        //                    var supplierCode = db.Suppliers.Find(newMR.SupplierID).SupplierCode;
+        //                    var first2LeterPartNo = newMR.PartNo.Remove(2, newMR.PartNo.Length - 2);
+        //                    string[] accInfor = commonFunction.AutoAccFill(newMR.TypeID.Value, modelColorOrMono, supplierCode, newMR.EstimateCost.Value, newMR.Unit, first2LeterPartNo);
+        //                    newMR.GLAccount = accInfor[0];
+        //                    newMR.Location = accInfor[1];
+        //                    newMR.AssetNumber = accInfor[2];
+        //                }
+        //                if (newMR.Belong == "LBP")
+        //                {
+        //                    newMR.StatusID = 2; // 2: W-PAE-Check;
+        //                }
+        //                else
+        //                {
+        //                    newMR.StatusID = 15; // 2: W-PE-App;
+        //                }
+        //                newMR.NoOfDieComponent = 1;
+        //                // Tính tổng số MR hiên tại + 1:  mục đích để tạo số MR theo thứ tự
+        //                if (newMR.MRNo == null)
+        //                {
+        //                    var totalMRinThisYear = db.MRs.Where(x => x.MRNo != null && x.RequestDate.Value.Year == DateTime.Now.Year).Count() + 1;
+        //                    newMR.MRNo = "MR" + DateTime.Now.ToString("yyMMdd") + "-" + totalMRinThisYear + "-00";
+        //                }
+        //                else
+        //                {
+        //                    var mainMRNO = newMR.MRNo.Remove(newMR.MRNo.Length - 2, 2);
+        //                    var getVerMR = newMR.MRNo.Substring(newMR.MRNo.Length - 2, 2);
+        //                    int verNumConvert = Convert.ToInt16(getVerMR);
+        //                    int newVerMR = verNumConvert + 1;
+        //                    var newVerMRString = Convert.ToString(newVerMR);
+        //                    if (newVerMRString.Length == 1)
+        //                    {
+        //                        newVerMRString = "0" + newVerMRString;
+        //                    }
+        //                    newMR.MRNo = mainMRNO + newVerMRString;
+        //                }
+        //                try
+        //                {
+
+        //                    db.MRs.Add(newMR);
+        //                    db.SaveChanges();
+        //                    commonFunction.updateDieLaunchingControl(newMR, Session["Name"].ToString());
+        //                    listSec.Add(newMR.PartNo + "-" + newMR.ModelList.ModelName);
+        //                    goto exitLoop;
+        //                }
+        //                catch
+        //                {
+        //                    listErr.Add(newMR.PartNo);
+        //                }
+        //            exitLoop:
+        //                ViewBag.note = "Câu lệnh vô nghĩ để thoát khỏi vòng lặp";
+        //            }
+
+        //        }
+        //    }
+        //    var data = new
+        //    {
+        //        listErr,
+        //        listSec
+        //    };
+
+        //    return Json(data, JsonRequestBehavior.AllowGet);
+        //}
+
+
+        public ActionResult IssueMRByExcelAllType(string belong, HttpPostedFileBase file)
+        {
+            // Apply for all type
+            if (Session["Dept"].ToString() != "PUR" && Session["Dept"].ToString() != "CRG")
+            {
+                return Json(null, JsonRequestBehavior.AllowGet);
+            }
+            var today = DateTime.Now;
+            string fileExt = Path.GetExtension(file.FileName);
+            if (fileExt == ".xls" || fileExt == ".xlsx")
+            {
+                MemoryStream output = new MemoryStream();
+                using (ExcelPackage package = new ExcelPackage(file.InputStream))
+                {
+                    ExcelWorksheet worksheet = package.Workbook.Worksheets.First();
+                    var start = worksheet.Dimension.Start;
+                    var end = worksheet.Dimension.End;
+
+                    for (int row = start.Row + 2; row <= end.Row; row++)
+                    { // Row by row...
+                      //Hãy kiểm tra điều kiện đã có dữ liệu nhập vào excel file
+                        var PartNo = worksheet.Cells[row, 3].Text.Trim().ToUpper();
+                        var err = "";
+                        if (String.IsNullOrEmpty(PartNo)) break;
+                        if (PartNo.Length != 12)
+                        {
+                            err = "Error: Part No gồm 12 kí tự ";
+                            goto exitLoop;
+                        }
+                        var modelName = worksheet.Cells[row, 2].Text.Trim().ToUpper();
+                        if (modelName.Length == 0)
+                        {
+                            err = "Error:Không input model ";
+                            goto exitLoop;
+                        }
+
+                        var PartName = worksheet.Cells[row, 4].Text.Trim();
+                        if (PartName.Length == 0)
+                        {
+                            err = "Error: không input Part Name ";
+                            goto exitLoop;
+                        }
+
+                        var Clasification = worksheet.Cells[row, 5].Text.Trim().ToUpper();
+                        if (Clasification.Length != 3)
+                        {
+                            err = "Error: Clasification phải 3 kí tự ";
+                            goto exitLoop;
+                        }
+
+                        var DrawHis = worksheet.Cells[row, 6].Text.Trim().ToUpper();
+                        if (DrawHis.Length != 3)
+                        {
+                            err = "Error: Drawhis phải có 3 kí tự ";
+                            goto exitLoop;
+                        }
+
+                        var ECNNo = worksheet.Cells[row, 7].Text.Trim().ToUpper();
+                        if (ECNNo.Length != 13)
+                        {
+                            err = "Error: ECN No phải 13 kí tự ";
+                            goto exitLoop;
+                        }
+
+                        var SupplierCode = worksheet.Cells[row, 8].Text.Trim().ToUpper();
+                        var FindSupplier = db.Suppliers.Where(x => x.SupplierCode == SupplierCode).FirstOrDefault();
+                        if (FindSupplier == null)
+                        {
+                            err = "Error: Supplier Code ko tồn tại ";
+                            goto exitLoop;
+                        }
+
+                        var orderTo = worksheet.Cells[row, 9].Text.Trim();
+                        var FindDieMakerCodeCode = db.Suppliers.Where(x => x.SupplierCode == orderTo).FirstOrDefault();
+                        if (FindDieMakerCodeCode == null)
+                        {
+                            err = "Error: Order To Code ko tồn tại ";
+                            goto exitLoop;
+                        }
+
+                        var CavQty = 0;
+                        bool soCav = int.TryParse(worksheet.Cells[row, 10].Text, out CavQty);
+                        if (CavQty == 0)
+                        {
+                            err = "Error: CavQty ko input hoặc ko phải số ";
+                            goto exitLoop;
+                        }
+                        var MCSize = 0;
+                        bool isMCSize = int.TryParse(worksheet.Cells[row, 11].Text, out MCSize);
+                        if (MCSize == 0)
+                        {
+                            err = "Error: MCSize ko input hoặc ko phải số ";
+                            goto exitLoop;
+                        }
+
+                        var ProcessCode = worksheet.Cells[row, 12].Text.ToUpper();
+                        var findProcessCode = db.ProcessCodeCalogories.Where(x => x.Type == ProcessCode).FirstOrDefault();
+                        if (findProcessCode == null)
+                        {
+                            err = "Error: ProcessCode ko input hoặc tồn tại ";
+                            goto exitLoop;
+                        }
+                        var dieID_input = worksheet.Cells[row, 13].Text.ToUpper().Trim();
+
+
+                        var CommonPart = worksheet.Cells[row, 14].Text.Trim().ToUpper();
+                        if (CommonPart.Length != 0 && CommonPart.Length != 12 && CommonPart.Length != 25 && CommonPart.Length != 38)
+                        {
+                            err = "Error : CommonPart - input đủ 12 kí tự cho 1 part RC5-1234-000 và nếu nhiều hơn 2 part thì các nhau bởi dấu phẩy','";
+                            goto exitLoop;
+                        }
+
+                        DateTime PDD;
+                        if (!DateTime.TryParse(worksheet.Cells[row, 15].Text, out PDD))
+                        {
+                            err = "Error: Lỗi ở dữ liệu Part Due Date - kiểm tra đúng type date chưa ";
+                            goto exitLoop;
+                        }
+
+
+                        var Reason = worksheet.Cells[row, 16].Text.Trim();
+                        if (Reason.Length == 0)
+                        {
+                            err = "Error: Reason ko input";
+                            goto exitLoop;
+                        }
+
+                        double EstimateCost = 0;
+                        if (!double.TryParse(worksheet.Cells[row, 17].Text, out EstimateCost))
+                        {
+                            err = "Error: EstimateCost không input hoặc ko phải số";
+                            goto exitLoop;
+                        }
+                        var unit = worksheet.Cells[row, 18].Text.Trim();
+                        if (String.IsNullOrEmpty(unit))
+                        {
+                            err = "Error: Lỗi ở dữ liệu Unit";
+                            goto exitLoop;
+                        }
+                        var GL = worksheet.Cells[row, 19].Text.Trim();
+                        var assetNo = worksheet.Cells[row, 20].Text.Trim();
+                        var location = worksheet.Cells[row, 21].Text.Trim();
+                        var DE_die = worksheet.Cells[row, 22].Text.Trim();
+                        var note = worksheet.Cells[row, 23].Text.Trim();
+                        //*****************************************************************
+
+                        MR newMR = new MR();
+                        newMR.PartNo = PartNo;
+                        newMR.PartName = PartName;
+                        newMR.Clasification = Clasification;
+                        newMR.DrawHis = DrawHis;
+                        newMR.ECNNo = ECNNo;
+                        newMR.SupplierID = FindSupplier.SupplierID;
+                        newMR.OrderTo = orderTo;
+                        newMR.SupplierName = db.Suppliers.Find(newMR.SupplierID).SupplierName;
+                        newMR.CavQty = CavQty;
+                        newMR.MCSize = MCSize;
+                        newMR.RequestDate = DateTime.Now;
+                        newMR.RequestBy = Session["Name"].ToString();
+                        newMR.RequestUserMail = Session["Mail"].ToString();
+                        newMR.ProcessCodeID = findProcessCode.ProcessCodeID;
+                        newMR.CommonPart = CommonPart;
+                        newMR.PDD = PDD;
+                        newMR.Reason = Reason;
+                        newMR.EstimateCost = EstimateCost;
+                        newMR.DE_Die = DE_die == "Y" ? true : false;
+                        newMR.Location = location;
+                        newMR.GLAccount = GL;
+                        newMR.AssetNumber = assetNo;
+                        newMR.ModelName = modelName;
+                        newMR.Unit = unit;
+                        newMR.Note = note;
+                        newMR.RenewForDie = dieID_input;
+                        newMR.DieNo = dieID_input;
+                        if (newMR.Clasification == "11A")
+                        {
+                            newMR.TypeID = 1; // NewDie
+                        }
+                        else
+                        {
+                            if (newMR.Clasification.Substring(0, 1) != "1" && newMR.Clasification.Substring(1, 2) == "1A") //21A,31A,41A
+                            {
+                                newMR.TypeID = 2; // Addtional
+                            }
+                            else
+                            {
+                                var _2ndLeterOfClassify = newMR.Clasification.Substring(1, 1);
+                                if (_2ndLeterOfClassify == "4")
+                                {
+                                    newMR.TypeID = 3; // Renewl
+
+                                }
+                                if (_2ndLeterOfClassify == "5")
+                                {
+                                    newMR.TypeID = 4; // X5 ECN
+
+                                }
+                                if (_2ndLeterOfClassify == "6")
+                                {
+                                    newMR.TypeID = 5; // X6 Modify
+
+
+                                }
+                                if (_2ndLeterOfClassify == "7")
+                                {
+                                    newMR.TypeID = 6; // X7 Repar
+                                }
+                                if (_2ndLeterOfClassify == "2" || _2ndLeterOfClassify == "3" || _2ndLeterOfClassify == "8" || _2ndLeterOfClassify == "9")
+                                {
+                                    newMR.TypeID = 7; // Others
+                                }
+                                newMR.DieNo = dieID_input;
+
+                            }
+                        }
+
+                        newMR.Belong = belong;
+
+                        var resultContent = JsonConvert.SerializeObject((issueMR(newMR, "Request MR", "issueByList", null, null, null)));
+                        string[] ArrErr = resultContent.Split(',');
+                        ArrErr = ArrErr[0].Split(':');
+                        err = ArrErr[1];
+
+
+                    exitLoop:
+                        ViewBag.note = "Câu lệnh vô nghĩ để thoát khỏi vòng lặp";
+                        worksheet.Cells[row, 23].Value = err;
+                    }
+                    package.SaveAs(output);
+
+                }
+                Response.Clear();
+                Response.Buffer = true;
+                Response.Charset = "";
+                Response.ContentType = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+                Response.AddHeader("content-disposition", "attachment;filename=" + "Result_IssueMR" + ".xlsx");
+
+                output.WriteTo(Response.OutputStream);
+                Response.Flush();
+                Response.End();
+            }
+
+
+            return RedirectToAction("issueMR");
+        }
+
+        [HttpPost]
+        [ValidateAntiForgeryToken]
+        public ActionResult PLANReupdatebudget(int MRID, string BudgetCode)
+        {
+            if (Session["Dept"] == null)
+            {
+                Session["URL"] = HttpContext.Request.Url.PathAndQuery;
+                return RedirectToAction("Index", "Login");
+            }
+            var mR = db.MRs.Find(MRID);
+            if (mR.ReUpdateBudgetCode != true)
+            {
+                return RedirectToAction("index");
+            }
+            mR.BudgetCode = BudgetCode;
+            mR.ReUpdateBudgetCode = false;
+            db.Entry(mR).State = EntityState.Modified;
+            db.SaveChanges();
+            return RedirectToAction("index");
+        }
+
+        [HttpPost]
+        [ValidateAntiForgeryToken]
+        public ActionResult ExchangeRate(double exchangeRateVNDtoUSD, double exchangeRateJPYtoUSD)
+        {
+            if (Session["Dept"] == null)
+            {
+                Session["URL"] = HttpContext.Request.Url.PathAndQuery;
+                return RedirectToAction("Index", "Login");
+            }
+            if (exchangeRateVNDtoUSD < 20000 && exchangeRateVNDtoUSD > 26000)
+            {
+                return RedirectToAction("index", new { msg = "rate you input is not correct, plz re-confirm" });
+            }
+            if (exchangeRateJPYtoUSD < 100 && exchangeRateJPYtoUSD > 200)
+            {
+                return RedirectToAction("index", new { msg = "rate you input is not correct, plz re-confirm" });
+            }
+            if (Session["Role"].ToString() == "Admin" || Session["Dept"].ToString() == "ACC")
+            {
+                ExchangeRate newExchange = new ExchangeRate();
+                newExchange.RateVNDtoUSD = exchangeRateVNDtoUSD;
+                newExchange.RateJPYtoUSD = exchangeRateJPYtoUSD;
+                newExchange.RecordDate = DateTime.Now.ToShortDateString();
+                newExchange.RecordBy = Session["Name"].ToString();
+                db.ExchangeRates.Add(newExchange);
+                db.SaveChanges();
+            }
+            return RedirectToAction("index");
+        }
+
+        public ActionResult AddBudgetCode()
+        {
+            if (Session["Role"] == null)
+            {
+                return RedirectToAction("Index", "Login");
+            }
+            if (Session["Dept"].ToString() != "PLAN")
+            {
+                return RedirectToAction("index");
+            }
+            var budgetCode = db.BudgetCodeMR_PLAN.ToList().OrderByDescending(x => x.CreateDate);
+            return View(budgetCode);
+        }
+
+        [HttpPost]
+        [ValidateAntiForgeryToken]
+        public ActionResult AddBudgetCode(string segment, string budgetCode, string budgetName, int amount, string unit, string create, string edit, int? id)
+        {
+            if (Session["Dept"] == null)
+            {
+                Session["URL"] = HttpContext.Request.Url.PathAndQuery;
+                return RedirectToAction("Index", "Login");
+            }
+            if (segment == null || budgetCode == null || budgetName == null)
+            {
+                return View(db.BudgetCodeMR_PLAN.ToList().OrderByDescending(x => x.CreateDate));
+            }
+            if (create == "Create")
+            {
+                BudgetCodeMR_PLAN newBudget = new BudgetCodeMR_PLAN();
+                newBudget.Segment = segment;
+                newBudget.BudgetCode = budgetCode;
+                newBudget.BudgetName = budgetName;
+                newBudget.BudgetAmount = amount;
+                newBudget.Unit = unit;
+                newBudget.CreateBy = Session["Name"].ToString();
+                newBudget.CreateDate = DateTime.Now;
+                db.BudgetCodeMR_PLAN.Add(newBudget);
+                db.SaveChanges();
+            }
+            if (edit == "Edit")
+            {
+                var budget = db.BudgetCodeMR_PLAN.Find(id);
+                budget.Segment = segment;
+                budget.BudgetCode = budgetCode;
+                budget.BudgetName = budgetName;
+                budget.BudgetAmount = amount;
+                budget.Unit = unit;
+                budget.EditBy = Session["Name"].ToString();
+                budget.EditDate = DateTime.Now;
+                db.Entry(budget).State = EntityState.Modified;
+                db.SaveChanges();
+            }
+
+            return RedirectToAction("AddBudgetCode");
+        }
+        public ActionResult EditBudgetCode(int id)
+        {
+            if (Session["Dept"].ToString() != "PLAN")
+            {
+                return RedirectToAction("index");
+            }
+            return View(db.BudgetCodeMR_PLAN.Find(id));
+        }
+        public JsonResult deletebudgetcode(int? id)
+        {
+            bool status = false;
+            if (Session["Dept"].ToString() != "PLAN")
+            {
+                status = false;
+            }
+            else
+            {
+                try
+                {
+                    var budget = db.BudgetCodeMR_PLAN.Find(id);
+                    db.BudgetCodeMR_PLAN.Remove(budget);
+                    db.SaveChanges();
+                    status = true;
+                }
+                catch
+                {
+                    status = false;
+                }
+            }
+
+            return Json(status, JsonRequestBehavior.AllowGet);
+        }
+        public JsonResult changeToNewBugdetCode(int id, string segment, string budgetCode, string budgetName, int amount, string unit)
+        {
+            bool status = false;
+            var item = db.BudgetCodeMR_PLAN.Find(id);
+            if (item != null)
+            {
+                // Tìm tất cả MR chưa paid có item.BudgetCode => sang budgetCode vừa upload lên
+                db.MRs.Where(x => x.StatusID != 14 && x.BudgetCode == item.BudgetCode).ToList()
+                    .ForEach(y => y.NewBudgetCode = budgetCode);
+                db.SaveChanges();
+
+                db.MRs.Where(x => x.StatusID != 14 && x.NewBudgetCode == item.BudgetCode).ToList()
+                   .ForEach(y => y.NewBudgetCode = budgetCode);
+                db.SaveChanges();
+
+                item.Segment = segment;
+                item.BudgetCode = budgetCode;
+                item.BudgetName = budgetName;
+                item.BudgetAmount = amount;
+                item.Unit = unit;
+                item.CreateBy = Session["Name"].ToString();
+                item.CreateDate = DateTime.Now;
+                db.Entry(item).State = EntityState.Modified;
+                db.SaveChanges();
+                status = true;
+                // Lưu thông tin budget code mới
+            }
+
+            return Json(status, JsonRequestBehavior.AllowGet);
+        }
+        /******************************************Finish Issue***************************************************/
+        /*********************************************************************************************************/
+
+        /*********************************************************************************************************/
+        /********************************For Check & Approval & Reject********************************************/
+
+        //public ActionResult deptAction(int? id)
+        //{
+        //    if (Session["Role"] == null)
+        //    {
+        //        if (Session["Role"] == null)
+        //        {
+        //            return RedirectToAction("Index", "Login");
+        //        }
+        //    }
+        //    if (id == null)
+        //    {
+        //        return new HttpStatusCodeResult(HttpStatusCode.BadRequest);
+        //    }
+        //    var mR = db.MRs.Find(id);
+
+        //    if (mR == null)
+        //    {
+        //        return HttpNotFound();
+        //    }
+        //    var today = DateTime.Now;
+        //    ViewBag.IssueNo = "MR" + today.ToString("yyMMdd-hhmmss");
+        //    ViewBag.BudgetCode = db.BudgetCodeMR_PLAN.ToList();
+
+        //    return View(mR);
+        //}
+
+        public JsonResult paeCheck(string mRID, string dieMaker, string makelocation, string action, string DE_die, string pdd, string specDie, string SucesDieNo, string SucessPart, int cavQty, int MCsize, string commonPart, string familyPart, string noOfConponent, string paeComment, bool? cancel_NoPay, bool? Cancel_NoRepair)
+        {
+            var data = "";
+            var today = DateTime.Now;
+            if (Session["Dept"].ToString().Contains("PAE"))
+            {
+                var mR = db.MRs.Find(Int32.Parse(mRID));
+                if (action == "Check" && mR.StatusID == 2)
+                {
+                    try
+                    {
+                        mR.StatusID = 3; // W -PAE-App
+                        mR.CommonPart = !String.IsNullOrEmpty(commonPart) ? commonPart.ToUpper() : null;
+                        mR.FamilyPart = !String.IsNullOrEmpty(familyPart) ? familyPart.ToUpper() : null;
+                        mR.DE_Die = DE_die == "true" ? true : false;
+                        mR.SucessDieID = !String.IsNullOrEmpty(SucesDieNo) ? SucesDieNo.ToUpper() : null;
+                        mR.SucessPartNo = !String.IsNullOrEmpty(SucessPart) ? SucessPart.ToUpper() : null;
+                        mR.CavQty = cavQty;
+                        mR.MCSize = MCsize;
+                        mR.NoOfDieComponent = String.IsNullOrEmpty(noOfConponent) ? 1 : Convert.ToInt16(noOfConponent);
+                        mR.PDD = Convert.ToDateTime(pdd);
+                        mR.DieSpecial = specDie;
+                        mR.DieMaker = !String.IsNullOrEmpty(dieMaker) ? dieMaker : null;
+                        mR.PAECheckBy = Session["Name"].ToString();
+                        mR.PAECheckDate = today;
+                        mR.MakeLocation = makelocation;
+                        if (!String.IsNullOrEmpty(paeComment))
+                        {
+                            mR.Note = today.ToString("yyyy/MM/dd ") + Session["Name"].ToString() + ": " + paeComment + System.Environment.NewLine + mR.Note;
+                        }
+                        data = "Sucess Check for" + mR.MRNo;
+                    }
+                    catch
+                    {
+                        data = "Fail Check for" + mR.MRNo;
+                    }
+
+                }
+                if (action == "Reject" && mR.StatusID == 2)
+                {
+                    mR.StatusID = 11; // 11: Reject MR
+                    if (!String.IsNullOrEmpty(paeComment))
+                    {
+                        mR.Note = today.ToString("yyyy/MM/dd ") + Session["Name"].ToString() + "Rejected: " + paeComment + System.Environment.NewLine + mR.Note;
+                    }
+                    data = "Sucess Reject for" + mR.MRNo;
+                    changeDieOfficialToNot(mR);
+                }
+
+                if (action == "Cancel" && mR.StatusID == 2)
+                {
+                    mR.StatusID = 12; // cancel
+                    string addComment = "";
+                    if (cancel_NoPay == true)
+                    {
+                        addComment = "[No-Pay]";
+                    }
+                    if (Cancel_NoRepair == true)
+                    {
+                        addComment += "[No-Repair]";
+                    }
+                    paeComment = addComment + paeComment;
+                    if (!String.IsNullOrEmpty(paeComment))
+                    {
+                        mR.Note = today.ToString("yyyy/MM/dd ") + Session["Name"].ToString() + " Cancel: " + paeComment + System.Environment.NewLine + mR.Note;
+                    }
+
+                    // Cancel TPI
+                    commonFunction.cancelTPI(mR, cancel_NoPay, Cancel_NoRepair, Session["Name"].ToString(), Session["Mail"].ToString());
+                    // Cancel DIE
+                    commonFunction.cancelDie(mR);
+
+                    data = "Sucess Check for" + mR.MRNo;
+                    changeDieOfficialToNot(mR);
+                }
+
+                db.Entry(mR).State = EntityState.Modified;
+                db.SaveChanges();
+            }
+
+            return Json(data, JsonRequestBehavior.AllowGet);
+        }
+
+        public JsonResult purCheckMR(string mRID, string action, string remark,string pdd, HttpPostedFileBase purAttach)
+        {
+            var data = "";
+            var today = DateTime.Now;
+            if (Session["Dept"].ToString().Contains("PUR"))
+            {
+                var mR = db.MRs.Find(Int32.Parse(mRID));
+                if (action == "Check" && mR.StatusID == 6)
+                {
+                    try
+                    {
+                        mR.StatusID = 7; // W -PUR-App
+                       
+                        if (!String.IsNullOrEmpty(remark))
+                        {
+                            mR.Note = today.ToString("yyyy/MM/dd ") + Session["Name"].ToString() + ": " + remark + System.Environment.NewLine + mR.Note;
+                        }
+                        mR.PDD = !String.IsNullOrWhiteSpace(pdd) ? Convert.ToDateTime(pdd) : mR.PDD;
+                        if (purAttach != null)
+                        {
+                            string fileName = purAttach.FileName;
+                            fileName = "PURAttach_" + DateTime.Now.ToString("yyyy-MM-dd HHmmss") + fileName;
+                            purAttach.SaveAs(Server.MapPath("~/File/MR/" + fileName));
+                            mR.PURAttach = fileName;
+                        }
+                        mR.PURCheckBy = Session["Name"].ToString();
+                        mR.PURCheckDate = today;
+                        data = "Sucess Check for" + mR.MRNo;
+                    }
+                    catch
+                    {
+                        data = "Fail Check for" + mR.MRNo;
+                    }
+
+                }
+                if (action == "Reject" && mR.StatusID == 6)
+                {
+                    mR.StatusID = 11; // 11: Reject MR
+                    if (!String.IsNullOrEmpty(remark))
+                    {
+                        mR.Note = today.ToString("yyyy/MM/dd ") + Session["Name"].ToString() + " Rejected: " + remark + System.Environment.NewLine + mR.Note;
+                    }
+                    data = "Sucess Reject for" + mR.MRNo;
+                    changeDieOfficialToNot(mR);
+                }
+
+                
+
+                db.Entry(mR).State = EntityState.Modified;
+                db.SaveChanges();
+            }
+
+            return Json(data, JsonRequestBehavior.AllowGet);
+        }
+        public JsonResult allowEdit(string[] id)
+        {
+            var data = false;
+            var mR = db.MRs.Find(Convert.ToInt32(id[0]));
+            if (mR.StatusID == 1 || mR.StatusID == 2 || mR.StatusID == 11)
+            {
+                data = true;
+            }
+            if (Session["Role"].ToString() == "Admin")
+            {
+                data = true;
+            }
+
+            return Json(data, JsonRequestBehavior.AllowGet);
+        }
+        public JsonResult getApproveAndPURCheck(string[] id)
+        {
+            var today = DateTime.Now;
+            var dept = Session["Dept"].ToString().Trim();
+            var role = Session["MR_Role"].ToString().Trim();
+            List<string> success = new List<string>();
+            List<string> fail = new List<string>();
+            if ((dept.Contains("PAE") || dept == "CRG" || dept == "PE1") && role == "Approve")
+            {
+                for (var i = 0; i < id.Length; i++)
+                {
+                    var mR = db.MRs.Find(Convert.ToInt32(id[i]));
+                    if (mR.StatusID == 3 || (mR.StatusID == 15) || (mR.StatusID == 16))
+                    {
+
+                        //Check need PLAN confirm budget or not?
+                        // Nếu MR lớn hơn hoặc bằng 30tr VND => need PLan và ngược lại không cần.
+                        // trả về true => có
+                        if (commonFunction.isNeedPLAN(mR.TypeID.Value, mR.EstimateCost.Value, mR.Unit))
+                        {
+                            mR.StatusID = 4; //4: W-PLAN Check
+                        }
+                        else
+                        {
+                            mR.StatusID = 6; //6: W-PUR-Check
+                        }
+
+                        mR.PAEAppBy = Session["Name"].ToString();
+                        mR.PAEAppDate = today;
+                        db.Entry(mR).State = EntityState.Modified;
+                        db.SaveChanges();
+
+                        success.Add(mR.MRNo);
+                        commonFunction.genarateNewDie("", "", "", "", "", "", "", "", "", mR, null);
+                        //commonFunction.updateDieLaunchingControl(mR, Session["Name"].ToString());
+                    }
+                    else
+                    {
+                        fail.Add(mR.MRNo);
+                    }
+                }
+            }
+            if (dept == "PLAN" && role == "Approve")
+            {
+                for (var i = 0; i < id.Length; i++)
+                {
+                    var mR = db.MRs.Find(Convert.ToInt32(id[i]));
+                    if (mR.StatusID == 5)
+                    {
+                        mR.StatusID = 6; //6: W-PUR-Check
+                        mR.PLANAppBy = Session["Name"].ToString();
+                        mR.PLANAppDate = today;
+                        db.Entry(mR).State = EntityState.Modified;
+                        db.SaveChanges();
+                        //send email 
+
+                        success.Add(mR.MRNo);
+                    }
+                    else
+                    {
+                        fail.Add(mR.MRNo);
+                    }
+                }
+            }
+            if (dept == "PUR" && role == "Check")
+            {
+                for (var i = 0; i < id.Length; i++)
+                {
+                    var mR = db.MRs.Find(Convert.ToInt32(id[i]));
+                    if (mR.StatusID == 6)
+                    {
+                        mR.StatusID = 7; // 7: W-PUR-App
+                        mR.PURCheckBy = Session["Name"].ToString();
+                        mR.PURCheckDate = today;
+                        db.Entry(mR).State = EntityState.Modified;
+                        db.SaveChanges();
+                        success.Add(mR.MRNo);
+                    }
+                    else
+                    {
+                        fail.Add(mR.MRNo);
+                    }
+                }
+
+            }
+            if (dept == "PUR" && role == "Approve")
+            {
+                for (var i = 0; i < id.Length; i++)
+                {
+                    var mR = db.MRs.Find(Convert.ToInt32(id[i]));
+                    if (mR.StatusID == 7)
+                    {
+                        mR.StatusID = 8; //8: Approved
+                        mR.PURAppBy = Session["Name"].ToString();
+                        mR.PURAppDate = today;
+                        db.Entry(mR).State = EntityState.Modified;
+                        db.SaveChanges();
+                        commonFunction.genarateNewDie("", "", "", "", "", "", "", "", "", mR, null);
+                        commonFunction.UpdateTPIStatus(mR, "MRApp");
+                        //********************************************************
+                        // Chuyển sang Issue PO_Die
+
+                        PO_Dies newPO_Die = new PO_Dies();
+                        var PR = mR.Clasification.ToString();
+                        if (mR.EstimateCost == 10)
+                        {
+                            newPO_Die.TempPO = true;
+                        }
+                        else
+                        {
+                            newPO_Die.TempPO = false;
+                        }
+                        //var PR = mR.Clasification.ToString();
+                        var rawPR = PR.Remove(PR.Length - 1);
+                        var resultConvert = commonFunction.getNummberInString(rawPR[0].ToString());
+                        if(resultConvert == null)
+                        {
+                            rawPR = "0" + rawPR.Substring(1);
+                        }
+                        newPO_Die.PR = rawPR;
+                        newPO_Die.MRID = mR.MRID;
+                        newPO_Die.POStatusID = 1; // W-PUR-ISSUE PO
+                        newPO_Die.Active = true;
+                        newPO_Die.DeliveryDate = mR.PDD;
+                        newPO_Die.CreateDate = DateTime.Now;
+                        db.PO_Dies.Add(newPO_Die);
+                        db.SaveChanges();
+
+                        //*********************************//
+
+
+
+
+                    }
+                    else
+                    {
+                        fail.Add(mR.MRNo);
+                    }
+                }
+            }
+            var data = new
+            {
+                success,
+                fail
+            };
+
+            return Json(data, JsonRequestBehavior.AllowGet);
+        }
+        public JsonResult rejectMR(string[] id, string reason)
+        {
+            var today = DateTime.Now;
+            var dept = Session["Dept"].ToString().Trim();
+            var role = Session["MR_Role"].ToString().Trim();
+            List<string> success = new List<string>();
+            List<string> fail = new List<string>();
+            if (dept.Contains("PAE"))
+            {
+                for (var i = 0; i < id.Length; i++)
+                {
+                    var mR = db.MRs.Find(Convert.ToInt32(id[i]));
+                    if (mR.StatusID == 2 || mR.StatusID == 3)
+                    {
+                        mR.StatusID = 11; // 11: Reject MR
+                        mR.Note = today.ToString("yyyy-MM-dd: ") + Session["Name"] + " Reject: " + reason + System.Environment.NewLine + mR.Note;
+                        db.Entry(mR).State = EntityState.Modified;
+                        db.SaveChanges();
+                        success.Add(mR.MRNo);
+                        changeDieOfficialToNot(mR);
+                    }
+                    else
+                    {
+                        fail.Add(mR.MRNo);
+                    }
+                }
+            }
+            if (dept == "CRG")
+            {
+                for (var i = 0; i < id.Length; i++)
+                {
+                    var mR = db.MRs.Find(Convert.ToInt32(id[i]));
+                    if (mR.StatusID == 16)
+                    {
+                        mR.StatusID = 11; // 11: Reject MR
+                        mR.Note = today.ToString("yyyy-MM-dd: ") + Session["Name"] + " Reject: " + reason + System.Environment.NewLine + mR.Note;
+                        db.Entry(mR).State = EntityState.Modified;
+                        db.SaveChanges();
+                        success.Add(mR.MRNo);
+                        changeDieOfficialToNot(mR);
+                    }
+                    else
+                    {
+                        fail.Add(mR.MRNo);
+                    }
+                }
+            }
+            if (dept == "PE1")
+            {
+                for (var i = 0; i < id.Length; i++)
+                {
+                    var mR = db.MRs.Find(Convert.ToInt32(id[i]));
+                    if (mR.StatusID == 15)
+                    {
+                        mR.StatusID = 11; // 11: Reject MR
+                        mR.Note = today.ToString("yyyy-MM-dd: ") + Session["Name"] + " Reject: " + reason + System.Environment.NewLine + mR.Note;
+                        db.Entry(mR).State = EntityState.Modified;
+                        db.SaveChanges();
+                        success.Add(mR.MRNo);
+                        changeDieOfficialToNot(mR);
+                    }
+                    else
+                    {
+                        fail.Add(mR.MRNo);
+                    }
+                }
+            }
+            if (dept == "PLAN")
+            {
+                for (var i = 0; i < id.Length; i++)
+                {
+                    var mR = db.MRs.Find(Convert.ToInt32(id[i]));
+                    if (mR.StatusID == 4 || mR.StatusID == 5)
+                    {
+                        mR.StatusID = 11; // 11: Reject MR
+                        mR.Note = today.ToString("yyyy-MM-dd: ") + Session["Name"] + " Reject: " + reason + System.Environment.NewLine + mR.Note;
+                        db.Entry(mR).State = EntityState.Modified;
+                        db.SaveChanges();
+                        success.Add(mR.MRNo);
+                        changeDieOfficialToNot(mR);
+                    }
+                    else
+                    {
+                        fail.Add(mR.MRNo);
+                    }
+                }
+            }
+            if (dept == "PUR")
+            {
+                for (var i = 0; i < id.Length; i++)
+                {
+                    var mR = db.MRs.Find(Convert.ToInt32(id[i]));
+                    if (mR.StatusID == 6 || mR.StatusID == 7)
+                    {
+                        mR.StatusID = mR.StatusID == 7 ?   6 :  11; // W-PUR-Check
+                        mR.Note = today.ToString("yyyy-MM-dd: ") + Session["Name"] + " Reject: " + reason + System.Environment.NewLine + mR.Note;
+                        db.Entry(mR).State = EntityState.Modified;
+                        db.SaveChanges();
+                        success.Add(mR.MRNo);
+                        changeDieOfficialToNot(mR);
+                    }
+                    else
+                    {
+                        fail.Add(mR.MRNo);
+                    }
+                }
+            }
+
+
+
+            var data = new
+            {
+                success,
+                fail
+            };
+
+            return Json(data, JsonRequestBehavior.AllowGet);
+        }
+
+        public void changeDieOfficialToNot(MR mR)
+        {
+            if (mR.TypeID <= 3) // New/Add/Renew
+            {
+                var common = db.CommonDie1.Where(x => x.DieNo == mR.DieNo && x.Active != false).FirstOrDefault();
+                if (common != null)
+                {
+                    var die = db.Die1.Find(common.DieID);
+                    die.isOfficial = false;
+                    db.Entry(die).State = EntityState.Modified;
+                    db.SaveChanges();
+                }
+
+            }
+        }
+
+
+        //public JsonResult getIssueMR(string[] id, string GLAcc, string assetNo, string location)
+        //{
+        //    var today = DateTime.Now;
+        //    var dept = Session["Dept"].ToString().Trim();
+        //    var role = Session["Role"].ToString().Trim();
+        //    List<string> success = new List<string>();
+        //    List<string> fail = new List<string>();
+        //    if (dept == "STD" && role == "Issue")
+        //    {
+        //        for (var i = 0; i < id.Length; i++)
+        //        {
+        //            var mR = db.MRs.Find(Convert.ToInt32(id[i]));
+        //            if (mR.StatusID == 1)
+        //            {
+        //                // Xu li reason cho truong hop X7 repair và X6 modify
+        //                if (mR.TypeID == 6 || mR.TypeID == 5 || mR.TypeID == 7)
+        //                {
+        //                    try
+        //                    {
+        //                        string[] arrReasonList = mR.Reason.Split(',');
+        //                        var reason = "";
+        //                        var att = "";
+
+        //                        foreach (var item in arrReasonList)
+        //                        {
+        //                            var trbl = db.Troubles.Where(x => x.TroubleNo == item).FirstOrDefault();
+        //                            reason = trbl.TroubleName + "," + reason;
+        //                            att = trbl.Report + "," + att;
+        //                        }
+        //                        mR.TroubleNo_OnlyForX7 = mR.Reason;
+        //                        mR.Reason = reason.Remove(reason.Length - 1);
+        //                        mR.Attachment = att.Remove(att.Length - 1);
+        //                    }
+        //                    catch
+        //                    {
+        //                        //
+        //                    }
+        //                }
+        //                mR.GLAccount = GLAcc;
+        //                mR.Location = location;
+        //                mR.AssetNumber = assetNo;
+        //                if (GLAcc == null || location == null || assetNo == null)
+        //                {
+        //                    fail.Add(mR.PartNo + "-" + mR.Clasification);
+        //                    goto exitLoop;
+        //                }
+        //                mR.StatusID = 2; // 2: W-PAE-Check;
+        //                if (mR.Belong == "PACKING")
+        //                {
+        //                    mR.StatusID = 15; // 2: W-PE-App;
+        //                }
+        //                // Tính tổng số MR hiên tại + 1:  mục đích để tạo số MR theo thứ tự
+        //                if (mR.MRNo == null)
+        //                {
+        //                    var totalMRinThisYear = db.MRs.Where(x => x.MRNo != null && x.RequestDate.Value.Year == DateTime.Now.Year).Count() + 1;
+        //                    mR.MRNo = "MR" + today.ToString("yyMMdd") + "-" + totalMRinThisYear + "-00";
+        //                }
+        //                else
+        //                {
+        //                    var mainMRNO = mR.MRNo.Remove(mR.MRNo.Length - 2, 2);
+        //                    var getVerMR = mR.MRNo.Substring(mR.MRNo.Length - 2, 2);
+        //                    int verNumConvert = Convert.ToInt16(getVerMR);
+        //                    int newVerMR = verNumConvert + 1;
+        //                    var newVerMRString = Convert.ToString(newVerMR);
+        //                    if (newVerMRString.Length == 1)
+        //                    {
+        //                        newVerMRString = "0" + newVerMRString;
+        //                    }
+        //                    mR.MRNo = mainMRNO + newVerMRString;
+        //                }
+
+        //                mR.IssueBy = Session["Name"].ToString();
+        //                mR.IssueDate = today;
+        //                mR.Active = true;
+        //                db.Entry(mR).State = EntityState.Modified;
+        //                db.SaveChanges();
+
+        //                success.Add(mR.PartNo + "-" + mR.Clasification);
+        //                exitLoop:
+        //                ViewBag.err = "câu lệnh vô nghĩa để thoát vòng lặp";
+        //            }
+        //            else
+        //            {
+        //                fail.Add(mR.PartNo + "-" + mR.Clasification);
+        //            }
+        //        }
+        //    }
+        //    var data = new
+        //    {
+        //        success,
+        //        fail
+        //    };
+
+        //    return Json(data, JsonRequestBehavior.AllowGet);
+        //}
+        public JsonResult getBudgetCodeForMR_PLAN(string[] id, string budget)
+        {
+            var today = DateTime.Now;
+            var dept = Session["Dept"].ToString().Trim();
+            var role = Session["MR_Role"].ToString().Trim();
+            List<string> success = new List<string>();
+            List<string> fail = new List<string>();
+            if (dept == "PLAN" && role == "Check")
+            {
+                for (var i = 0; i < id.Length; i++)
+                {
+                    var mR = db.MRs.Find(Convert.ToInt32(id[i]));
+                    if (mR.StatusID == 4)
+                    {
+                        if (budget == null)
+                        {
+                            fail.Add(mR.MRNo);
+                            goto exitLoop;
+                        }
+                        mR.StatusID = 5; // 5: W-PLAN-Approve
+                        mR.BudgetCode = budget;
+                        mR.PLANCheckBy = Session["Name"].ToString();
+                        mR.PLANCheckDate = today;
+                        db.Entry(mR).State = EntityState.Modified;
+                        db.SaveChanges();
+                        //send email 
+
+                        success.Add(mR.MRNo);
+
+                    exitLoop:
+                        ViewBag.err = "Câu vô nghĩa để thoát vòng lặp";
+                    }
+                    else
+                    {
+                        if ((mR.StatusID == 8 || mR.StatusID == 13 || mR.StatusID == 14) && mR.ReUpdateBudgetCode == true)
+                        {
+                            mR.BudgetCode = budget;
+                            mR.ReUpdateBudgetCode = false;
+                            db.Entry(mR).State = EntityState.Modified;
+                            db.SaveChanges();
+                            success.Add(mR.MRNo);
+                        }
+                        else
+                        {
+                            fail.Add(mR.MRNo);
+                        }
+                    }
+
+                }
+            }
+            var data = new
+            {
+                success,
+                fail
+            };
+
+            return Json(data, JsonRequestBehavior.AllowGet);
+        }
+
+        //[HttpPost]
+        //[ValidateAntiForgeryToken]
+        //public ActionResult deptAction(MR mr, string deptAction)
+        //{
+        //    var today = DateTime.Now;
+        //    var mR = db.MRs.Find(mr.MRID);
+        //    var Dept = Session["Dept"].ToString();
+        //    var role = Session["Role"].ToString();
+        //    switch (Dept)
+        //    {
+        //        case "STD":
+        //            if (deptAction == "Issue" && role == "Issue")
+        //            {
+        //                // Xu li reason cho truong hop X7 repair.
+        //                if (mR.TypeID == 6)
+        //                {
+        //                    string[] arrReasonList = mR.Reason.Split(',');
+        //                    var reason = "";
+        //                    var att = "";
+
+        //                    foreach (var item in arrReasonList)
+        //                    {
+        //                        var trbl = db.Troubles.Where(x => x.TroubleNo == item).FirstOrDefault();
+        //                        reason = trbl.TroubleName + "," + reason;
+        //                        att = trbl.Report + "," + att;
+        //                    }
+        //                    mR.TroubleNo_OnlyForX7 = mR.Reason;
+        //                    mR.Reason = reason.Remove(reason.Length - 1);
+        //                    mR.Attachment = att.Remove(att.Length - 1);
+
+        //                }
+
+
+
+        //                mR.GLAccount = mr.GLAccount;
+        //                mR.Location = mr.Location;
+        //                mR.AssetNumber = mr.AssetNumber;
+        //                if (mr.GLAccount == null || mr.AssetNumber == null || mr.Location == null)
+        //                {
+        //                    ViewBag.err = "Please input informationsss";
+
+        //                    return View(mR);
+        //                }
+        //                mR.StatusID = 2; // 2: W-PAE-Check;
+        //                                 // Tính tổng số MR hiên tại + 1:  mục đích để tạo số MR theo thứ tự
+        //                var totalMRinThisYear = db.MRs.Where(x => x.MRNo != null && x.IssueDate.Value.Year == DateTime.Now.Year).Count() + 1;
+        //                mR.MRNo = "MR" + today.ToString("yyMMdd") + "-" + totalMRinThisYear;
+        //                mR.IssueBy = Session["Name"].ToString();
+        //                mR.IssueDate = today;
+        //                mR.Active = true;
+        //                db.Entry(mR).State = EntityState.Modified;
+        //                db.SaveChanges();
+        //                sendEmail(mR.MRID, "PAE", "Check");
+        //                return RedirectToAction("Index");
+        //            }
+
+        //            break;
+        //        case "PAE":
+        //            if (deptAction == "Check" && role == "Check")
+        //            {
+        //                if (mr.PDD == null)
+        //                {
+        //                    ViewBag.err = "Please check again Part Due Date";
+        //                    return View(mR);
+        //                }
+        //                mR.PDD = mr.PDD;
+        //                mR.StatusID = 3; // 3: W-PAE-Check => W-PAE-Approve
+        //                mR.PAECheckBy = Session["Name"].ToString();
+        //                mR.PAECheckDate = today;
+        //                mR.CommonPart = mr.CommonPart;
+        //                if (mr.PAEComment != null)
+        //                {
+        //                    mR.Note = Session["Name"].ToString() + ": " + mr.PAEComment + System.Environment.NewLine + mR.Note;
+        //                }
+        //                try
+        //                {
+        //                    db.Entry(mR).State = EntityState.Modified;
+        //                    db.SaveChanges();
+        //                }
+        //                catch
+        //                {
+        //                    //
+        //                }
+        //                //send email 
+        //                sendEmail(mR.MRID, "PAE", "Approve");
+
+        //                return RedirectToAction("Index");
+        //            }
+        //            if (deptAction == "Approve" && role == "Approve")
+        //            {
+        //                mR.StatusID = 4; //4: W-PAE-Approve
+        //                mR.PAEAppBy = Session["Name"].ToString();
+        //                mR.PAEAppDate = today;
+        //                if (mr.PAEComment != null)
+        //                {
+        //                    mR.Note = Session["Name"].ToString() + ": " + mr.PAEComment + System.Environment.NewLine + mR.Note;
+        //                }
+        //                try
+        //                {
+        //                    db.Entry(mR).State = EntityState.Modified;
+        //                    db.SaveChanges();
+        //                }
+        //                catch
+        //                {
+        //                    //
+        //                }
+        //                //send email 
+        //                sendEmail(mR.MRID, "PLAN", "Check");
+
+        //                return RedirectToAction("Index");
+        //            }
+        //            if (deptAction == "Reject")
+        //            {
+        //                mR.StatusID = 11; // 11: Reject MR
+        //                mR.Note = Session["Name"].ToString() + " Rejected: " + mr.PAEComment + System.Environment.NewLine + mR.Note;
+        //                try
+        //                {
+        //                    db.Entry(mR).State = EntityState.Modified;
+        //                    db.SaveChanges();
+        //                }
+        //                catch
+        //                {
+        //                    //
+        //                }
+        //                //send email to all
+        //                string[] dept = { "PAE", "STD", "PUR" };
+        //                sendEmailToAll(mR.MRID, "Rejected", dept);
+
+        //                return RedirectToAction("Index");
+        //            }
+        //            break;
+
+        //        case "PLAN":
+        //            if (deptAction == "Check" && role == "Check")
+        //            {
+        //                if (mr.IssueNo == null || mr.BudgetCode == null)
+        //                {
+        //                    ViewBag.err = "Please input information!";
+        //                    ViewBag.IssueNo = "MR" + today.ToString("yyMMdd-hhmmss");
+        //                    ViewBag.BudgetCode = db.BudgetCodeMR_PLAN.ToList();
+        //                    return View(mR);
+        //                }
+        //                mR.StatusID = 5; // 5: W-PLAN-Approve
+        //                mR.BudgetCode = mr.BudgetCode;
+        //                mR.IssueNo = mr.IssueNo;
+        //                mR.PLANCheckBy = Session["Name"].ToString();
+        //                mR.PLANCheckDate = today;
+        //                if (mr.PLANComment != null)
+        //                {
+        //                    mR.Note = Session["Name"].ToString() + ": " + mr.PLANComment + System.Environment.NewLine + mR.Note;
+        //                }
+        //                try
+        //                {
+        //                    db.Entry(mR).State = EntityState.Modified;
+        //                    db.SaveChanges();
+        //                }
+        //                catch
+        //                {
+        //                    //
+        //                }
+        //                //send email 
+        //                sendEmail(mR.MRID, "PLAN", "Approve");
+
+        //                return RedirectToAction("Index");
+        //            }
+        //            if (deptAction == "Approve" && role == "Approve")
+        //            {
+        //                mR.StatusID = 6; //6: W-PUR-Check
+        //                mR.PLANAppBy = Session["Name"].ToString();
+        //                mR.PLANAppDate = today;
+
+        //                if (mr.PLANComment != null)
+        //                {
+        //                    mR.Note = Session["Name"].ToString() + ": " + mr.PLANComment + System.Environment.NewLine + mR.Note;
+        //                }
+        //                try
+        //                {
+        //                    db.Entry(mR).State = EntityState.Modified;
+        //                    db.SaveChanges();
+        //                }
+        //                catch
+        //                {
+        //                    //
+        //                }
+        //                //send email 
+        //                sendEmail(mR.MRID, "PUR", "Check");
+
+        //                return RedirectToAction("Index");
+        //            }
+        //            if (deptAction == "Reject")
+        //            {
+        //                mR.StatusID = 11; // 11: Reject MR
+        //                mR.Note = Session["Name"].ToString() + " Rejected: " + mr.PLANComment + System.Environment.NewLine + mR.Note;
+        //                try
+        //                {
+        //                    db.Entry(mR).State = EntityState.Modified;
+        //                    db.SaveChanges();
+        //                }
+        //                catch
+        //                {
+        //                    //
+        //                }
+        //                //send email to all
+        //                string[] dept = { "PLAN", "PAE", "STD", "PUR" };
+        //                sendEmailToAll(mR.MRID, "Rejected", dept);
+
+        //                return RedirectToAction("Index");
+        //            }
+        //            break;
+        //        case "PUR":
+        //            if (deptAction == "Check" && role == "Check")
+        //            {
+        //                mR.StatusID = 7; // 7: W-PUR-App
+        //                mR.PODate = mr.PODate;
+        //                mR.AppCost = mr.AppCost;
+        //                mR.PURCheckBy = Session["Name"].ToString();
+        //                mR.PURCheckDate = today;
+        //                if (mr.PURComment != null)
+        //                {
+        //                    mR.Note = Session["Name"].ToString() + ": " + mr.PURComment + System.Environment.NewLine + mR.Note;
+        //                }
+
+        //                try
+        //                {
+        //                    db.Entry(mR).State = EntityState.Modified;
+        //                    db.SaveChanges();
+        //                }
+        //                catch
+        //                {
+        //                    //
+        //                }
+        //                //send email 
+        //                sendEmail(mR.MRID, "PUR", "Approve");
+
+        //                return RedirectToAction("Index");
+        //            }
+        //            if (deptAction == "Approve" && role == "Approve")
+        //            {
+
+        //                mR.StatusID = 8; //8: Approved
+
+        //                mR.PURAppBy = Session["Name"].ToString();
+        //                mR.PURAppDate = today;
+        //                if (mr.PURComment != null)
+        //                {
+        //                    mR.Note = Session["Name"].ToString() + ": " + mr.PURComment + System.Environment.NewLine + mR.Note;
+        //                }
+
+        //                try
+        //                {
+        //                    db.Entry(mR).State = EntityState.Modified;
+        //                    db.SaveChanges();
+
+        //                    // Chuyển sang Issue PO
+        //                    PO newPO = new PO();
+        //                    if (mR.EstimateCost == 10)
+        //                    {
+        //                        newPO.TempPO = true;
+        //                    }
+        //                    else
+        //                    {
+        //                        newPO.TempPO = false;
+        //                    }
+        //                    var PR = mR.Clasification.ToString();
+        //                    newPO.PR = PR.Remove(PR.Length - 1);
+        //                    newPO.MRID = mR.MRID;
+        //                    newPO.POstatusID = 1; // W-PUR-ISSUE PO
+        //                    newPO.Active = true;
+        //                    newPO.DeliveryDate = mR.PDD;
+        //                    newPO.CreateDate = DateTime.Now;
+        //                    db.POes.Add(newPO);
+        //                    db.SaveChanges();
+        //                }
+        //                catch
+        //                {
+        //                    //
+        //                }
+        //                //send email to all
+        //                string[] dept = { "PLAN", "PAE", "STD", "PUR" };
+        //                sendEmailToAll(mR.MRID, "Apporved", dept);
+        //                return RedirectToAction("Index");
+        //            }
+        //            if (deptAction == "Reject")
+        //            {
+        //                mR.StatusID = 11; // 11: Reject MR
+        //                mR.Note = Session["Name"].ToString() + " Rejected: " + mr.PURComment + System.Environment.NewLine + mR.Note;
+
+        //                try
+        //                {
+        //                    db.Entry(mR).State = EntityState.Modified;
+        //                    db.SaveChanges();
+        //                }
+        //                catch
+        //                {
+        //                    //
+        //                }
+        //                //send email to all
+        //                string[] dept = { "PLAN", "PAE", "STD", "PUR" };
+        //                sendEmailToAll(mR.MRID, "Rejected", dept);
+
+        //                return RedirectToAction("Index");
+        //            }
+        //            break;
+        //        default:
+        //            ViewBag.err = "Your do not have permistion for this request!";
+        //            break;
+        //    }
+
+
+        //    return View(mR);
+        //}
+
+        public JsonResult cancelResquest(int id)
+        {
+            // chi  PUR cancel MR
+            // MR bi W-Issue or Reject or Approved thi moi cancel
+            // MR dang on progress muon Cancel thi phai Reject truoc
+
+            var status = false;
+            if (Session["Dept"].ToString().Contains("PUR"))
+            {
+                var mR = db.MRs.Find(id);
+
+                if (mR.StatusID == 1 || mR.StatusID == 11)
+                {
+                    mR.StatusID = 12; // cancel
+                    mR.Note = "This MR was canceled/Deleted by " + Session["Name"].ToString() + " on " + DateTime.Now.ToString("yyyy-MM-dd") + System.Environment.NewLine + mR.Note;
+                    db.Entry(mR).State = EntityState.Modified;
+                    db.SaveChanges();
+                    status = true;
+                }
+            }
+
+            return Json(status, JsonRequestBehavior.AllowGet);
+        }
+
+        public JsonResult getDieData(string key, string dim)
+        {
+            db.Configuration.ProxyCreationEnabled = false;
+
+            var length = key.Trim().Length;
+
+
+            var troubles = db.Troubles.Where(x => x.DieNo == key && (x.FinalStatusID == 1 || x.FinalStatusID == 2
+            || x.FinalStatusID == 4 || x.FinalStatusID == 5 || x.FinalStatusID == 6)).OrderByDescending(x => x.SubmitDate).Select(trbls => new
+            {
+                dieID = trbls.DieID,
+                troubleID = trbls.TroubleID,
+                troubleNo = trbls.TroubleNo,
+                troubleName = trbls.TroubleName,
+                trobulePOCode = trbls.NeedDiePOCalogory.PODieCode,
+                troubleFinalStatus = trbls.FinalStatusCalogory.FinalStatus,
+                //TroubleType = commonFunction.getTroubleType(trbls),
+                feedbackDate = trbls.PAECommentDate.HasValue ? trbls.PAECommentDate : trbls.DMTAppDate,
+                report = trbls.Report,
+               
+            });
+            //var dsum =db.DSUMs.Where(x => x => x.DieNo == key && x.Die1.Disposal != true && x.Active != false)
+
+            //var dfm = db.DSUMs.Where(x => x.DSUMStatusID == 9 ? (db.Attachments.Where(y => y.DFMID == x.DFMID && (y.Clasify == "DFM PAE-APPROVED" || y.Clasify == "DFM PAE-G6UP-Approve" || y.Clasify == "DFM_Finished")).FirstOrDefault() == null ? "" : db.Attachments.Where(y => y.DFMID == x.DFMID && (y.Clasify == "DFM PAE-APPROVED" || y.Clasify == "DFM PAE-G6UP-Approve" || y.Clasify == "DFM_Finished")).FirstOrDefault()?.FileName) : "")),
+
+
+
+            var data = length == 20 ? db.CommonDie1.Where(x => x.DieNo == key && x.Die1.Disposal != true && x.Active != false).Select(die => new
+            {
+                dieID = die.DieID,
+                dieNo = die.DieNo,
+                partNo = die.Die1.PartNoOriginal,
+                partName = die.Parts1.PartName,
+                supplierID = die.Die1.SupplierID,
+                processCodeID = die.Die1.ProcessCodeID,
+                cavQty = die.Die1.CavQuantity,
+                MCsize = die.Die1.MCsize,
+                modelName = die.Parts1.Model,
+                commonPart = die.Die1.Common_Part_With,
+                familyDie = die.Die1.Family_Die_With,
+                troubles = troubles,
+                DSUM = db.DSUMs.Where(y => y.DieID == die.DieID && y.Active != false && y.DSUMStatusID == 9).Select(y => new
+                {
+                    DFM = db.Attachments.Where(z => z.DFMID == y.DFMID && (z.Clasify == "DFM PAE-APPROVED" || z.Clasify == "DFM PAE-G6UP-Approve" || z.Clasify == "DFM_Finished")).FirstOrDefault(),
+                    DSUMNo = y.DSUMNo,
+                    DSUMStatus = y.DSUMStatusCategory.Status
+                }).FirstOrDefault()
+            })
+            : db.CommonDie1.Where(x => x.PartNo == key && x.Die1.Die_Code == dim).Select(die => new
+            {
+                dieID = die.DieID,
+                dieNo = die.DieNo,
+                partNo = die.Die1.PartNoOriginal,
+                partName = die.Parts1.PartName,
+                supplierID = die.Die1.SupplierID,
+                processCodeID = die.Die1.ProcessCodeID,
+                cavQty = die.Die1.CavQuantity,
+                MCsize = die.Die1.MCsize,
+                modelName = die.Parts1.Model,
+                commonPart = die.Die1.Common_Part_With,
+                familyDie = die.Die1.Family_Die_With,
+                troubles = troubles,
+                DSUM = db.DSUMs.Where(y => y.DieID == die.DieID && y.Active != false && y.DSUMStatusID == 9).Select(y => new
+                {
+                    DFM = db.Attachments.Where(z => z.DFMID == y.DFMID && (z.Clasify == "DFM PAE-APPROVED" || z.Clasify == "DFM PAE-G6UP-Approve" || z.Clasify == "DFM_Finished")).FirstOrDefault(),
+                    DSUMNo = y.DSUMNo,
+                    DSUMStatus = y.DSUMStatusCategory.Status
+                }).FirstOrDefault()
+            });
+            return Json(data, JsonRequestBehavior.AllowGet);
+        }
+
+        public JsonResult rdcYearly(int? year, string phase, int? typeID, string CostType, int? modelID, string modelType)
+        {
+            db.Configuration.ProxyCreationEnabled = false;
+            // Normal sẽ lấy current year và 5 năm gần ấy
+            if (year == 0)
+            {
+                year = DateTime.Now.Year;
+            }
+            var rdcVerify = db.MRs.Where(x => (x.Belong == "LBP" && x.StatusID != 1 && x.StatusID != 11 && x.StatusID != 12) && x.Active != false).ToList();
+
+            // Khi Phase được select
+            if (!String.IsNullOrEmpty(phase))
+            {
+                rdcVerify = rdcVerify.Where(x => x.Phase == phase).ToList();
+            }
+
+            // Khi Type được select
+            if (typeID != 0)
+            {
+                rdcVerify = rdcVerify.Where(x => x.TypeID == typeID).ToList();
+            }
+
+            // Khi ModelType được select
+            if (!String.IsNullOrEmpty(modelType))
+            {
+                rdcVerify = rdcVerify.Where(x => x.Phase == modelType).ToList();
+            }
+
+            // Khi Model được select
+            if (modelID != 0)
+            {
+                rdcVerify = rdcVerify.Where(x => x.ModelID == modelID).ToList();
+            }
+
+
+            // Tính RDC cho 5 năm liên tục ***********************************************
+            List<RDC> rdc5year = new List<RDC>();
+            int currentYear = DateTime.Now.Year;
+            int min, max;
+            if (currentYear - year > 4)
+            {
+                min = Convert.ToInt16(year) - 1;
+                max = Convert.ToInt16(year) + 3;
+            }
+            else
+            {
+                min = currentYear - 4;
+                max = currentYear;
+            }
+
+
+            for (var i = min; i <= max; i++)
+            {
+                var rdc5Year = rdcVerify.Where(x => x.PAEAppDate.HasValue ? x.PAEAppDate.Value.Year == i : x.RequestDate.Value.Year == i).ToList();
+
+                RDC rdcEachYear = new RDC();
+                rdcEachYear.Time = Convert.ToString(i);
+                rdcEachYear.X1NewDie = 0;
+                rdcEachYear.X1Additional = 0;
+                rdcEachYear.X4Renewal = 0;
+                rdcEachYear.X5ECN = 0;
+                rdcEachYear.X6Modify = 0;
+                rdcEachYear.X6overHaul = 0;
+                rdcEachYear.X7Repair = 0;
+                double allX6 = 0;
+
+                foreach (var item in rdc5Year)
+                {
+                    if (item.TypeID == 1) // 1 : X1 newdie
+                    {
+                        rdcEachYear.X1NewDie = Math.Round(rdcEachYear.X1NewDie + Convert.ToDouble(item.EstimateCostExchangeUSD), 1);
+                    }
+
+                    if (item.TypeID == 2) // 2 : X1 Additional
+                    {
+                        rdcEachYear.X1Additional = Math.Round(rdcEachYear.X1Additional + Convert.ToDouble(item.EstimateCostExchangeUSD), 1);
+                    }
+                    if (item.TypeID == 3) // 3 : X4 Renewal
+                    {
+                        rdcEachYear.X4Renewal = Math.Round(rdcEachYear.X4Renewal + Convert.ToDouble(item.EstimateCostExchangeUSD), 1);
+                    }
+                    if (item.TypeID == 4) // 4 : X5 ECN
+                    {
+                        rdcEachYear.X5ECN = Math.Round(rdcEachYear.X5ECN + Convert.ToDouble(item.EstimateCostExchangeUSD), 1);
+                    }
+                    if (item.TypeID == 5) // 5 : X6 Modify
+                    {
+                        allX6 = Math.Round(allX6 + Convert.ToDouble(item.EstimateCostExchangeUSD), 1);
+                    }
+                    if (item.TypeID == 5 && (item.Reason.ToUpper().Trim().Contains("OVERHAUL")
+                        || item.Reason.ToUpper().Trim().Contains("OH")
+                        || item.Reason.ToUpper().Trim().Contains("OVERHA")
+                        || item.Reason.ToUpper().Trim().Contains("OVER HAUL")
+                        || item.Reason.ToUpper().Trim().Contains("OVER HAUL")
+                        || item.Reason.ToUpper().Trim().Contains("OVERHAUL")
+                        || item.Reason.ToUpper().Trim().Contains("OVERHUA"))) // 5 : X6 OverHaul
+
+                    {
+                        rdcEachYear.X6overHaul = Math.Round(rdcEachYear.X6overHaul + Convert.ToDouble(item.EstimateCostExchangeUSD), 1);
+                    }
+                    // X6modify = allX6 - X6overHaul
+                    rdcEachYear.X6Modify = Math.Round(allX6 - rdcEachYear.X6overHaul, 1);
+                    if (item.TypeID == 6) // 6 : X7Repair
+                    {
+                        rdcEachYear.X7Repair = Math.Round(rdcEachYear.X7Repair + Convert.ToDouble(item.EstimateCostExchangeUSD), 1);
+                    }
+                }
+                rdc5year.Add(rdcEachYear);
+            }
+            //*************************************************************
+
+            return Json(rdc5year, JsonRequestBehavior.AllowGet);
+        }
+
+
+        public JsonResult rdcMonthy(int? year, string phase, int? typeID, string CostType, int? modelID, string modelType)
+        {
+            db.Configuration.ProxyCreationEnabled = false;
+            // Normal sẽ lấy current year và 5 năm gần ấy
+            if (year == 0)
+            {
+                year = DateTime.Now.Year;
+            }
+            var rdcVerify = db.MRs.Where(x => (x.Belong == "LBP" && x.StatusID != 1 && x.StatusID != 11 && x.StatusID != 12) && x.Active != false).ToList();
+
+            // Khi Phase được select
+            if (!String.IsNullOrEmpty(phase))
+            {
+                rdcVerify = rdcVerify.Where(x => x.Phase == phase).ToList();
+            }
+
+            // Khi Type được select
+            if (typeID != 0)
+            {
+                rdcVerify = rdcVerify.Where(x => x.TypeID == typeID).ToList();
+            }
+
+            // Khi ModelType được select
+            if (!String.IsNullOrEmpty(modelType))
+            {
+                rdcVerify = rdcVerify.Where(x => x.Phase == modelType).ToList();
+            }
+
+            // Khi Model được select
+            if (modelID != 0)
+            {
+                rdcVerify = rdcVerify.Where(x => x.ModelID == modelID).ToList();
+            }
+
+
+            //// RDC cho 1 năm theo từng tháng
+            List<RDC> rdcMonthy = new List<RDC>();
+
+            var rdcYear = rdcVerify.Where(x => x.PAEAppDate.HasValue ? x.PAEAppDate.Value.Year == year : x.RequestDate.Value.Year == year).ToList();
+            for (var i = 1; i <= 12; i++)
+            {
+                var rdcMonth = rdcYear.Where(x => x.PAEAppDate.HasValue ? x.PAEAppDate.Value.Month == i : x.RequestDate.Value.Month == i).ToList();
+                RDC rdcEachMonth = new RDC();
+                rdcEachMonth.Time = Convert.ToString(i);
+                rdcEachMonth.X1NewDie = 0;
+                rdcEachMonth.X1Additional = 0;
+                rdcEachMonth.X4Renewal = 0;
+                rdcEachMonth.X5ECN = 0;
+                rdcEachMonth.X6Modify = 0;
+                rdcEachMonth.X6overHaul = 0;
+                rdcEachMonth.X7Repair = 0;
+                double allX6 = 0;
+                foreach (var item in rdcMonth)
+                {
+                    if (item.TypeID == 1) // 1 : X1 newdie
+                    {
+                        rdcEachMonth.X1NewDie = Math.Round(rdcEachMonth.X1NewDie + Convert.ToDouble(item.EstimateCostExchangeUSD), 1);
+                    }
+
+                    if (item.TypeID == 2) // 2 : X1 Additional
+                    {
+                        rdcEachMonth.X1Additional = Math.Round(rdcEachMonth.X1Additional + Convert.ToDouble(item.EstimateCostExchangeUSD), 1);
+                    }
+                    if (item.TypeID == 3) // 3 : X4 Renewal
+                    {
+                        rdcEachMonth.X4Renewal = Math.Round(rdcEachMonth.X4Renewal + Convert.ToDouble(item.EstimateCostExchangeUSD), 1);
+                    }
+                    if (item.TypeID == 4) // 4 : X5 ECN
+                    {
+                        rdcEachMonth.X5ECN = Math.Round(rdcEachMonth.X5ECN + Convert.ToDouble(item.EstimateCostExchangeUSD), 1);
+                    }
+                    if (item.TypeID == 5) // 5 : X6 Modify
+                    {
+                        allX6 = Math.Round(allX6 + Convert.ToDouble(item.EstimateCostExchangeUSD), 1);
+                    }
+                    if (item.TypeID == 5 && (item.Reason.ToUpper().Trim().Contains("OVERHAUL")
+                        || item.Reason.ToUpper().Trim().Contains("OH")
+                        || item.Reason.ToUpper().Trim().Contains("OVERHA")
+                        || item.Reason.ToUpper().Trim().Contains("OVER HAUL")
+                        || item.Reason.ToUpper().Trim().Contains("OVER HAUL")
+                        || item.Reason.ToUpper().Trim().Contains("OVERHAUL")
+                        || item.Reason.ToUpper().Trim().Contains("OVERHUA"))) // 5 : X6 OverHaul
+
+                    {
+                        rdcEachMonth.X6overHaul = Math.Round(rdcEachMonth.X6overHaul + Convert.ToDouble(item.EstimateCostExchangeUSD), 1);
+                    }
+                    // X6modify = allX6 - X6overHaul
+                    rdcEachMonth.X6Modify = Math.Round((allX6 - rdcEachMonth.X6overHaul), 1);
+                    if (item.TypeID == 6) // 6 : X7Repair
+                    {
+                        rdcEachMonth.X7Repair = Math.Round(rdcEachMonth.X7Repair + Convert.ToDouble(item.EstimateCostExchangeUSD), 1);
+                    }
+                }
+                rdcMonthy.Add(rdcEachMonth);
+            }
+
+            return Json(rdcMonthy, JsonRequestBehavior.AllowGet);
+        }
+
+        public JsonResult getMRDetail(int id)
+        {
+            var data = db.MRs.Where(x => x.MRID == id).AsEnumerable().Select(x => new
+            {
+                MRID = x.MRID,
+                MRStatusID = x.StatusID,
+                MRtype = x.MRType.Type,
+                Model = x.ModelName,
+                PartNo = x.PartNo,
+                PartName = x.PartName,
+                DrawHis = x.DrawHis,
+                ECNNo = x.ECNNo,
+                EstimateCost = @String.Format("{0:0,0.##}", x.EstimateCost),
+                Unit = x.Unit,
+                DieNo = x.DieNo,
+                RequestBy = x.RequestBy,
+                RequestDate = x.RequestDate.HasValue ? x.RequestDate.Value.ToString("yyyy-MM-dd") : "",
+                Clasification = x.Clasification,
+                SupplierName = x.Supplier.SupplierName,
+                SupplierCode = x.Supplier.SupplierCode,
+                GLAcc = x.GLAccount,
+                AssetNo = x.AssetNumber,
+                AppCost = @String.Format("{0:0,0.##}", x.AppCost),
+                Reason = x.Reason,
+                MRNo = x.MRNo,
+                BudgetCode = x.BudgetCode,
+                CavQty = x.CavQty,
+                MCsize = x.MCSize,
+                DE_Die = x.DE_Die,
+                Compoment = x.NoOfDieComponent,
+                DieMakerCode = x.OrderTo,
+                Location = x.Location,
+                Attach = getFileTPI(x.TroubleID),
+                Remark = x.Note,
+                ProcessCode = x.ProcessCodeCalogory.Type,
+                SucesDieNo = x.SucessDieID,
+                SucessPart = x.SucessPartNo,
+                CommonPart = x.CommonPart,
+                FamilyPart = x.FamilyPart,
+                PDD = x.PDD == null ? "" : x.PDD.Value.ToString("yyyy-MM-dd"),
+                IssueBy = x.IssueBy == null ? x.RequestBy : x.IssueBy,
+                IssueDate = x.IssueDate == null ? x.RequestDate.Value.ToString("yyyy-MM-dd") : x.IssueDate.Value.ToString("yyyy-MM-dd"),
+                PAECheckBy = x.PAECheckBy,
+                PAECheckDate = x.PAECheckDate == null ? "" : x.PAECheckDate.Value.ToString("yyyy-MM-dd"),
+                PAEAppBy = x.PAEAppBy,
+                PAEAppDate = x.PAEAppDate == null ? "" : x.PAEAppDate.Value.ToString("yyyy-MM-dd"),
+                PLANCheckBy = x.PLANCheckBy,
+                PLANCheckDate = x.PLANCheckDate == null ? "" : x.PLANCheckDate.Value.ToString("yyyy-MM-dd"),
+                PLANAppBy = x.PLANAppBy,
+                PLANAppDate = x.PLANAppDate == null ? "" : x.PLANAppDate.Value.ToString("yyyy-MM-dd"),
+                PURCheckBy = x.PURCheckBy,
+                PURCheckDate = x.PURCheckDate == null ? "" : x.PURCheckDate.Value.ToString("yyyy-MM-dd"),
+                PURAppBy = x.PURAppBy,
+                PURAppDate = x.PURAppDate == null ? "" : x.PURAppDate.Value.ToString("yyyy-MM-dd"),
+                PURAttachment = x.PURAttach
+            });
+
+            return Json(data, JsonRequestBehavior.AllowGet);
+        }
+
+        public string getFileTPI(string troubleID)
+        {
+            var attchFile = "";
+            if (!string.IsNullOrWhiteSpace(troubleID))
+            {
+                var arrTroubleID = troubleID?.Split(',');
+                foreach (var id in arrTroubleID)
+                {
+                    var trb = db.Troubles.Find(int.Parse(id));
+                    attchFile = trb.Report + "," + attchFile;
+                }
+            }
+
+            attchFile = attchFile.Length > 0 ? attchFile.Remove(attchFile.Length - 1, 1) : "";
+            return attchFile;
+        }
+
+        /********************************Finish Check & Approval & Reject & Cancel******************************************/
+        /**********************************************************************************************************/
+
+        public ActionResult ExportExcelList(List<MR> mRs)
+        {
+            MemoryStream output = new MemoryStream();
+            using (ExcelPackage package = new ExcelPackage(new FileInfo(Server.MapPath("~/File/MR/MR_Control_List_Format02.xlsx"))))
+            {
+                ExcelWorksheet sheet = package.Workbook.Worksheets["Att05. P-MR control"];
+                int rowId = 8;
+                int i = 1;
+                foreach (var mR in mRs)
+                {
+                    sheet.Cells["A" + rowId.ToString()].Value = i;
+                    sheet.Cells["B" + rowId.ToString()].Value = mR.MRNo;
+                    sheet.Cells["C" + rowId.ToString()].Value = mR.TypeID == null ? "" : mR.MRType.Type;
+                    sheet.Cells["D" + rowId.ToString()].Value = mR.NoOfDieComponent;
+                    sheet.Cells["E" + rowId.ToString()].Value = mR.DieNo;
+                    sheet.Cells["F" + rowId.ToString()].Value = mR.ModelName;
+                    sheet.Cells["G" + rowId.ToString()].Value = mR.PartNo;
+                    sheet.Cells["H" + rowId.ToString()].Value = mR.PartName;
+                    sheet.Cells["I" + rowId.ToString()].Value = mR.DrawHis;
+                    sheet.Cells["J" + rowId.ToString()].Value = mR.ECNNo;
+                    sheet.Cells["K" + rowId.ToString()].Value = mR.PDD.HasValue ? String.Format("{0:yyyy-MM-dd}", mR.PDD) : "-";
+                    sheet.Cells["L" + rowId.ToString()].Value = mR.TroubleNo_OnlyForX7 == null ? mR.Reason : mR.TroubleNo_OnlyForX7;
+                    sheet.Cells["M" + rowId.ToString()].Value = mR.Clasification;
+                    sheet.Cells["N" + rowId.ToString()].Value = mR.ProcessCodeID == null ? "" : mR.ProcessCodeCalogory.Type;
+                    sheet.Cells["O" + rowId.ToString()].Value = mR.SupplierID == null ? "-" : mR.Supplier.SupplierCode;
+                    sheet.Cells["P" + rowId.ToString()].Value = mR.OrderTo;
+                    sheet.Cells["Q" + rowId.ToString()].Value = mR.CavQty;
+                    sheet.Cells["R" + rowId.ToString()].Value = mR.MCSize;
+                    sheet.Cells["S" + rowId.ToString()].Value = mR.CommonPart;
+                    sheet.Cells["T" + rowId.ToString()].Value = mR.FamilyPart;
+                    sheet.Cells["U" + rowId.ToString()].Value = mR.BudgetCode;
+                    sheet.Cells["V" + rowId.ToString()].Value = mR.GLAccount;
+                    sheet.Cells["W" + rowId.ToString()].Value = mR.AssetNumber;
+                    sheet.Cells["X" + rowId.ToString()].Value = mR.Location;
+                    sheet.Cells["Y" + rowId.ToString()].Value = mR.Unit;
+                    sheet.Cells["Z" + rowId.ToString()].Value = mR.EstimateCost;
+                    sheet.Cells["AA" + rowId.ToString()].Value = mR.DieSpecial;
+                    sheet.Cells["AB" + rowId.ToString()].Value = mR.SucessPartNo == null ? "-" : mR.SucessPartNo;
+                    sheet.Cells["AC" + rowId.ToString()].Value = mR.SucessPartName == null ? "-" : mR.SucessPartName;
+                    sheet.Cells["AD" + rowId.ToString()].Value = mR.SucessDieID == null ? "-" : mR.SucessDieID;
+                    sheet.Cells["AE" + rowId.ToString()].Value = mR.DisposeDieID == null ? "-" : mR.DisposeDieID;
+                    sheet.Cells["AF" + rowId.ToString()].Value = mR.DE_Die == null ? "-" : mR.DE_Die == true ? "Yes" : "No";
+                    sheet.Cells["AG" + rowId.ToString()].Value = mR.OrderTo == null ? "-" : mR.OrderTo;
+                    sheet.Cells["AH" + rowId.ToString()].Value = mR.MakeLocation == null ? "-" : mR.MakeLocation;
+                    sheet.Cells["AI" + rowId.ToString()].Value = mR.Phase;
+                    sheet.Cells["AJ" + rowId.ToString()].Value = mR.StatusID == null ? "-" : mR.MRStatusCalogory.StatusType;
+                    sheet.Cells["AK" + rowId.ToString()].Value = mR.Belong;
+                    sheet.Cells["AL" + rowId.ToString()].Value = commonFunction.getTPINo(mR.TroubleID);
+                    sheet.Cells["AM" + rowId.ToString()].Value = mR.EstimateCostExchangeUSD;
+                    sheet.Cells["AN" + rowId.ToString()].Value = mR.AppCostExchangeUSD;
+                    sheet.Cells["AO" + rowId.ToString()].Value = mR.IssueBy == null ? mR.RequestBy : mR.IssueBy;
+                    sheet.Cells["AP" + rowId.ToString()].Value = mR.IssueDate.HasValue ? String.Format("{0:yyyy-MM-dd}", mR.IssueDate) : String.Format("{0:yyyy-MM-dd}", mR.RequestDate);
+                    sheet.Cells["AQ" + rowId.ToString()].Value = mR.PAECheckBy == null ? "-" : mR.PAECheckBy;
+                    sheet.Cells["AR" + rowId.ToString()].Value = mR.PAECheckDate.HasValue ? String.Format("{0:yyyy-MM-dd}", mR.PAECheckDate) : "-";
+                    sheet.Cells["AS" + rowId.ToString()].Value = mR.PAEAppBy == null ? "-" : mR.PAEAppBy; ;
+                    sheet.Cells["AT" + rowId.ToString()].Value = mR.PAEAppDate.HasValue ? String.Format("{0:yyyy-MM-dd}", mR.PAEAppDate) : "-";
+                    sheet.Cells["AU" + rowId.ToString()].Value = mR.PLANCheckBy == null ? "-" : mR.PLANCheckBy;
+                    sheet.Cells["AV" + rowId.ToString()].Value = mR.PLANCheckDate.HasValue ? String.Format("{0:yyyy-MM-dd}", mR.PLANCheckDate) : "-";
+                    sheet.Cells["AW" + rowId.ToString()].Value = mR.PLANAppBy == null ? "-" : mR.PLANAppBy;
+                    sheet.Cells["AX" + rowId.ToString()].Value = mR.PLANAppDate.HasValue ? String.Format("{0:yyyy-MM-dd}", mR.PLANAppDate) : "-";
+                    sheet.Cells["AY" + rowId.ToString()].Value = mR.PURCheckBy == null ? "-" : mR.PURCheckBy;
+                    sheet.Cells["AZ" + rowId.ToString()].Value = mR.PURCheckDate.HasValue ? String.Format("{0:yyyy-MM-dd}", mR.PURCheckDate) : "-";
+                    sheet.Cells["BA" + rowId.ToString()].Value = mR.PURAppBy == null ? "-" : mR.PURAppBy;
+                    sheet.Cells["BB" + rowId.ToString()].Value = mR.PURAppDate.HasValue ? String.Format("{0:yyyy-MM-dd}", mR.PURAppDate) : "-";
+                    sheet.Cells["BC" + rowId.ToString()].Value = mR.Note;
+
+                    i++;
+                    rowId++;
+                }
+
+                package.SaveAs(output);
+            }
+            Response.Clear();
+            Response.Buffer = true;
+            Response.Charset = "";
+            Response.ContentType = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+            Response.AddHeader("content-disposition", "attachment;filename=MR_Control_List" + DateTime.Now.ToString("yyyyMMdd_hhmmss") + ".xlsx");
+            output.WriteTo(Response.OutputStream);
+            Response.Flush();
+            Response.End();
+            return RedirectToAction("Index");
+        }
+
+        public ActionResult ExportToMrForm(int? id)
+        {
+            if (id == null)
+            {
+                return new HttpStatusCodeResult(HttpStatusCode.BadRequest);
+            }
+            var mR = db.MRs.Find(id);
+            MemoryStream output = new MemoryStream();
+            var newEffectiveDate = DateTime.Parse("2023-10-01");
+            string format = "";
+            int ver = 0;
+            if (mR.RequestDate >= newEffectiveDate)
+            {
+                format = "~/File/MR/MRFormVer08.xlsx";
+                ver = 8;
+            }
+            else
+            {
+                format = "~/File/MR/MRFormVer07.xlsx";
+                ver = 7;
+            }
+            using (ExcelPackage package = new ExcelPackage(new FileInfo(Server.MapPath(format))))
+            {
+                ExcelWorksheet sheet = package.Workbook.Worksheets.First();
+
+                sheet.Cells["E7"].Value = mR.MRNo == null ? "-" : mR.MRNo;
+                if (ver == 7)
+                {
+                    sheet.Cells["K7"].Value = mR.TypeID == null ? "-" : mR.MRType.Type;
+                    sheet.Cells["R7"].Value = mR.NoOfDieComponent;
+                    sheet.Cells["Q16"].Value = mR.DieSpecial == null ? "-" : mR.DieSpecial;
+                }
+                if (ver == 8)
+                {
+                    sheet.Cells["I7"].Value = mR.TypeID == null ? "-" : mR.MRType.Type;
+                    sheet.Cells["M7"].Value = mR.NoOfDieComponent;
+                    sheet.Cells["Q16"].Value = mR.DieMaker == null ? "-" : mR.DieMaker;
+                    sheet.Cells["P7"].Value = mR.DE_Die == null ? "-" : mR.DE_Die == true ? "Y" : "N";
+                    sheet.Cells["S7"].Value = mR.MakeLocation;
+                }
+
+                sheet.Cells["E9"].Value = mR.DieNo;
+                sheet.Cells["E10"].Value = mR.ModelID == null ? "-" : mR.ModelName;
+                sheet.Cells["E11"].Value = mR.PartNo == null ? "-" : mR.PartNo;
+                sheet.Cells["E12"].Value = mR.PartName == null ? "-" : mR.PartName;
+                sheet.Cells["E13"].Value = mR.DrawHis == null ? "-" : mR.DrawHis;
+                sheet.Cells["E14"].Value = mR.ECNNo == null ? "-" : mR.ECNNo;
+                sheet.Cells["E15"].Value = mR.PDD.HasValue ? String.Format("{0:yyyy-MM-dd}", mR.PDD) : "-";
+                sheet.Cells["E16"].Value = mR.TroubleNo_OnlyForX7 == null ? mR.Reason : mR.TroubleNo_OnlyForX7;
+                sheet.Cells["K9"].Value = mR.Clasification == null ? "-" : mR.Clasification;
+                sheet.Cells["K10"].Value = mR.ProcessCodeID == null ? "-" : mR.ProcessCodeCalogory.Type;
+                sheet.Cells["K11"].Value = mR.SupplierID == null ? "-" : mR.Supplier.SupplierCode;
+                sheet.Cells["K12"].Value = mR.OrderTo == null ? "-" : mR.OrderTo;
+                sheet.Cells["K13"].Value = mR.CavQty == null ? "-" : mR.CavQty.ToString();
+                sheet.Cells["K14"].Value = mR.MCSize == null ? "-" : mR.MCSize.ToString();
+                sheet.Cells["K15"].Value = mR.CommonPart;
+                sheet.Cells["K16"].Value = mR.FamilyPart;
+                sheet.Cells["Q9"].Value = mR.BudgetCode == null ? "-" : mR.BudgetCode;
+                sheet.Cells["Q10"].Value = mR.GLAccount == null ? "-" : mR.GLAccount;
+                sheet.Cells["Q11"].Value = mR.AssetNumber == null ? "-" : mR.AssetNumber;
+                sheet.Cells["Q12"].Value = mR.Location == null ? "-" : mR.Location;
+                sheet.Cells["Q13"].Value = mR.Unit;
+                sheet.Cells["Q14"].Value = mR.EstimateCost;
+                sheet.Cells["Q15"].Value = mR.AppCost == null ? "-" : mR.AppCost.Value.ToString();
+
+
+                sheet.Cells["G21"].Value = mR.SucessDieID == null ? "-" : mR.SucessDieID;
+                sheet.Cells["G22"].Value = mR.SucessPartNo == null ? "-" : mR.SucessPartNo;
+                sheet.Cells["G23"].Value = mR.SucessPartName == null ? "-" : mR.SucessPartName;
+
+                sheet.Cells["G23"].Value = mR.DisposeDieID == null ? "-" : mR.DisposeDieID;
+
+                sheet.Cells["D29"].Value = mR.RequestBy == null ? "-" : mR.RequestBy;
+                sheet.Cells["D32"].Value = mR.RequestDate.HasValue ? String.Format("{0:yyyy-MM-dd}", mR.RequestDate) : "-";
+
+                // Neu MR Cancle || Reject  thi ko dien thong tin check va App
+                if (mR.StatusID == 12 || mR.StatusID == 11)
+                {
+                    var status = mR.MRStatusCalogory.StatusType;
+                    sheet.Cells["F29"].Value = "Was " + status;
+                    sheet.Cells["F32"].Value = "";
+
+                    sheet.Cells["H29"].Value = "Was " + status;
+                    sheet.Cells["H32"].Value = "";
+
+                    sheet.Cells["J29"].Value = "Was " + status;
+                    sheet.Cells["J32"].Value = "";
+
+                    sheet.Cells["L29"].Value = "Was " + status;
+                    sheet.Cells["L32"].Value = "";
+
+                    sheet.Cells["O29"].Value = "Was " + status;
+                    sheet.Cells["O32"].Value = "";
+
+                    sheet.Cells["R29"].Value = "Was " + status;
+                    sheet.Cells["R32"].Value = "";
+                }
+                else
+                {
+                    sheet.Cells["F29"].Value = mR.PAECheckBy == null ? "-" : mR.PAECheckBy;
+                    sheet.Cells["F32"].Value = mR.PAECheckDate.HasValue ? String.Format("{0:yyyy-MM-dd}", mR.PAECheckDate) : "-";
+
+                    sheet.Cells["H29"].Value = mR.PAEAppBy == null ? "-" : mR.PAEAppBy;
+                    sheet.Cells["H32"].Value = mR.PAEAppDate.HasValue ? String.Format("{0:yyyy-MM-dd}", mR.PAEAppDate) : "-";
+
+                    sheet.Cells["J29"].Value = mR.PLANCheckBy == null ? "-" : mR.PLANCheckBy;
+                    sheet.Cells["J32"].Value = mR.PLANCheckDate.HasValue ? String.Format("{0:yyyy-MM-dd}", mR.PLANCheckDate) : "-";
+
+                    sheet.Cells["L29"].Value = mR.PLANAppBy == null ? "-" : mR.PLANAppBy;
+                    sheet.Cells["L32"].Value = mR.PLANAppDate.HasValue ? String.Format("{0:yyyy-MM-dd}", mR.PLANAppDate) : "-";
+
+                    sheet.Cells["O29"].Value = mR.PURCheckBy == null ? "-" : mR.PURCheckBy;
+                    sheet.Cells["O32"].Value = mR.PURCheckDate.HasValue ? String.Format("{0:yyyy-MM-dd}", mR.PURCheckDate) : "-";
+
+                    sheet.Cells["R29"].Value = mR.PURAppBy == null ? "-" : mR.PURAppBy;
+                    sheet.Cells["R32"].Value = mR.PURAppDate.HasValue ? String.Format("{0:yyyy-MM-dd}", mR.PURAppDate) : "-";
+                }
+
+                sheet.Protection.IsProtected = true;
+                sheet.Protection.SetPassword("DMSPROTECTION");
+                package.SaveAs(output);
+            }
+            Response.Clear();
+            Response.Buffer = true;
+            Response.Charset = "";
+            Response.ContentType = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+            Response.AddHeader("content-disposition", "attachment;filename=" + mR.MRNo + ".xlsx");
+
+            output.WriteTo(Response.OutputStream);
+            Response.Flush();
+            Response.End();
+            return RedirectToAction("Index");
+        }
+
+
+
+
+
+
+
+
+
+        //Đang lỗi gửi mail nên chức năng gửi mail từng dept và all
+
+        //public void sendEmailToPlanToReupdateBudget(string MRNo)
+        //{
+        //    var PLanmems = db.Users.Where(x => x.Department.DeptName == "PLAN").ToList();
+        //    var mailList = "";
+        //    foreach (var item in PLanmems)
+        //    {
+        //        mailList = mailList + ',' + item.Email;
+        //    }
+        //    mailList.Remove(0);
+        //    mailList.Remove(mailList.Length - 1);
+        //    try
+        //    {
+        //        MailMessage mailMsg = new MailMessage();
+        //        mailMsg.From = new MailAddress("QV-DMS@canon-vn.com.vn");
+        //        mailMsg.To.Add(mailList);
+        //        mailMsg.To.Add("lbp-pae21@canon-vn.com.vn");
+        //        mailMsg.Subject = "[Re-Update budget code for MR No: " + MRNo + " ]";
+        //        mailMsg.IsBodyHtml = true;
+        //        mailMsg.Body = (
+        //            " Dear PLAN members,  <br /> " +
+        //                               "<br />" +
+        //                                  " This is information about MR issue from Die Management System <br />" +
+        //                                     "<br />" +
+        //                                        "Please re-update budget Code for MR No: " + MRNo +
+        //                                     "<br /> Please Click  <a href=" + String.Concat("http://qpae14:8081/") + "> Login DMS </a>" + "to take action" +
+        //                                     "<br />" +
+        //                                  "P/s: Please don't reply this email <br />" +
+        //                                  "***************************** <br />" +
+        //                                  "Thanks & Best Regards!"
+        //            );
+        //        mailMsg.Priority = MailPriority.Normal;
+        //        SmtpClient client = new SmtpClient("mail.cvn.canon.co.jp", 2525)
+        //        {
+        //            DeliveryMethod = SmtpDeliveryMethod.Network,
+        //            Credentials = new NetworkCredential("lbp-pae21@canon-vn.com.vn", ""),
+        //            EnableSsl = false
+        //        };
+
+        //        client.UseDefaultCredentials = false;
+        //        ThreadStart threadStart = delegate () { client.Send(mailMsg); };
+        //        Thread thread = new Thread(threadStart);
+        //        thread.Start();
+        //    }
+        //    catch
+        //    {
+
+        //    }
+        //}
+
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing)
+            {
+                db.Dispose();
+            }
+            base.Dispose(disposing);
+        }
+    }
+}
